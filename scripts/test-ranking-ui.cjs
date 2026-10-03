@@ -1,0 +1,42 @@
+const { _electron: electron } = require('playwright');
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const path = require('node:path');
+(async()=>{
+ const profile=await fs.mkdtemp('/private/tmp/flight-ranking-ui-');
+ const app=await electron.launch({...(process.env.FLIGHT_PACKAGED?{executablePath:process.env.FLIGHT_PACKAGED,args:[]}:{args:[path.resolve('.')]}),env:{...process.env,FLIGHT_USER_DATA:profile},timeout:60000});
+ try{
+  const page=await app.firstWindow(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.waitForFunction(()=>document.querySelector('#tradeRows tr'));
+  await page.locator('#newRun').click();
+  await page.locator('select[name="strategy"]').selectOption('cross_asset');
+  assert.ok(await page.locator('#rankingNote').isVisible());
+  assert.ok(await page.locator('input[name="risk"]').isDisabled());
+  await page.locator('#submitRun').click();
+  assert.match(await page.locator('#runError').innerText(),/historical hourly CSV/);
+  await page.locator('#runDialog .close-dialog').click();
+  const file=path.resolve('runs/diversified-trend-20/run.json');
+  await app.evaluate(({dialog},target)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[target]});},file);
+  await page.locator('#openRun').click();
+  await page.waitForFunction(()=>document.querySelector('#runName').textContent.includes('Diversified trend ensemble'));
+  await page.locator('#tradeRows tr').first().click();
+  assert.ok(await page.locator('#rankingDetail').isVisible());
+  assert.match(await page.locator('#rankingScore').innerText(),/4 upward trends/);
+  assert.ok(await page.locator('#forecastDetail').isHidden());
+  await page.locator('#assumptions').click();
+  assert.match(await page.locator('#infoContent').innerText(),/Higher-cost return/);
+  await page.locator('#infoDialog .close-dialog').click();
+  await fs.mkdir('artifacts',{recursive:true});await page.screenshot({path:'artifacts/diversified-trend.png',fullPage:true});
+  const dataset=path.resolve('data/ranking-ui-market.csv');
+  await app.evaluate(({dialog},target)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[target]});},dataset);
+  await page.locator('#newRun').click();await page.locator('#chooseData').click();await page.locator('#submitRun').click();
+  await page.waitForFunction(()=>!document.querySelector('#runDialog').open,null,{timeout:120000});
+  assert.match(await page.locator('#runName').innerText(),/Diversified trend ensemble/);
+  assert.equal(await page.locator('#sourceBadge').innerText(),'HISTORICAL REPLAY');
+  const saved=JSON.parse(await fs.readFile(path.join(profile,'last-run.json'),'utf8'));
+  assert.equal(saved.config.rank_model,'trend_budget');assert.equal(saved.config.target_volatility,.15);
+  assert.equal(saved.config.max_position,.2);assert.equal(saved.pairs.length,2);
+  assert.deepEqual(errors,[]);
+  console.log('Ranking desktop passed: real run, trend votes, risk diagnostics, historical-data requirement, and Python replay using the selected preset.');
+ }finally{await app.close();}
+})().catch(e=>{console.error(e);process.exit(1)});

@@ -1,0 +1,17 @@
+.env
+.env.*
+!.env.example
+*.pdf
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+dist/
+artifacts/
+data/*
+!data/.gitkeep
+runs/*
+!runs/.gitkeep
+.DS_Store
+
+.venv-lstm/

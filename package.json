@@ -1,0 +1,22 @@
+{
+  "name": "roostoo-flight-deck",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Roostoo strategy research and trade inspection desktop",
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "demo": "python3 -m roostoo.cli demo",
+    "test": "python3 -m unittest discover -s tests -v",
+    "test:ui": "node scripts/test-ui.cjs",
+    "package": "node scripts/build-app.cjs"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "electron": "^44.5.1",
+    "playwright": "^1.55.0"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

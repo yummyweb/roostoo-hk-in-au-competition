@@ -1,0 +1,66 @@
+const { _electron: electron } = require('playwright');
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const path = require('node:path');
+(async () => {
+ const profile = await fs.mkdtemp('/private/tmp/flight-ui-');
+ const app = await electron.launch({ ...(process.env.FLIGHT_PACKAGED ? {executablePath:process.env.FLIGHT_PACKAGED,args:[]} : {args:[path.resolve('.')]}), env:{...process.env,FLIGHT_USER_DATA:profile}, timeout:60000 });
+ try {
+  const page = await app.firstWindow(); const errors=[];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.waitForFunction(()=>document.querySelector('#tradeRows tr'),{timeout:30000});
+  assert.match(await page.title(),/Flight Deck/);
+  assert.ok(await page.locator('#tradeRows tr').count()>0);
+  await page.locator('#tradeRows tr').first().click();
+  assert.match(await page.locator('#tradeId').innerText(),/TRADE #/);
+  await page.locator('#focusTrade').click();
+  assert.match(await page.locator('#chartLabel').innerText(),/executions/);
+  await page.locator('[data-mode="drawdown"]').click();
+  assert.match(await page.locator('#chartLabel').innerText(),/Peak-to-trough/);
+  await page.locator('[data-mode="equity"]').click();
+  await page.locator('#resetChart').click();
+  await page.locator('#search').fill('impossible-no-trades');
+  assert.equal(await page.locator('#tradeRows tr').count(),0);
+  assert.ok(await page.locator('#noTrades').isVisible());
+  await page.locator('#search').fill('');
+  await page.locator('#pairFilter').selectOption('BTC/USD');
+  for(const t of await page.locator('#tradeRows .pair-cell strong').allTextContents())assert.equal(t,'BTC/USD');
+  await page.locator('#pairFilter').selectOption('all');
+  await page.locator('#sortPnl').click();
+  // Native dialogs are directed to test-owned files; exercise the actual IPC handlers.
+  const exportFile = path.join(profile,'trades.csv');
+  await app.evaluate(({dialog}, target) => {dialog.showSaveDialog=async()=>({canceled:false,filePath:target});}, exportFile);
+  await page.locator('#exportTrades').click();
+  await page.waitForFunction(()=>document.querySelector('#toast').textContent.includes('exported'));
+  assert.match(await fs.readFile(exportFile,'utf8'),/entry_time/);
+  const runFile=path.join(profile,'run.json');
+  await app.evaluate(({dialog}, target) => {dialog.showSaveDialog=async()=>({canceled:false,filePath:target});}, runFile);
+  await page.locator('#assumptions').click();
+  assert.ok(await page.locator('#infoDialog').isVisible());
+  await page.locator('#saveRun').click();
+  await page.waitForFunction(()=>document.querySelector('#toast').textContent.includes('saved'));
+  assert.equal(JSON.parse(await fs.readFile(runFile,'utf8')).schema_version,1);
+  await page.locator('#infoDialog .close-dialog').click();
+  await app.evaluate(({dialog},target)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[target]});},runFile);
+  await page.locator('#openRun').click();
+  await page.waitForFunction(()=>document.querySelector('#toast').textContent.includes('Run loaded'));
+  await fs.mkdir('artifacts',{recursive:true});
+  await page.screenshot({path:'artifacts/flight-deck.png',fullPage:true});
+  // Exercise real Python bridge, not a mocked engine.
+  await page.locator('#newRun').click();
+  await page.locator('select[name="strategy"]').selectOption('cash');
+  await page.locator('#submitRun').click();
+  await page.waitForFunction(()=>document.querySelector('#runName').textContent.startsWith('Cash'));
+  assert.equal(await page.locator('#equity').innerText(),'$100,000.00');
+  assert.equal(await page.locator('#tradeRows tr').count(),0);
+  assert.ok(await page.locator('#inspectorEmpty').isVisible());
+  await page.locator('#newRun').click();
+  await page.locator('select[name="strategy"]').selectOption('trend');
+  await page.locator('select[name="direction"]').selectOption('both');
+  await page.locator('#submitRun').click();
+  await page.waitForFunction(()=>document.querySelector('#tradeRows tr'));
+  assert.match(await page.locator('#sourceBadge').innerText(),/SYNTHETIC/);
+  assert.deepEqual(errors,[]);
+  console.log('Desktop smoke tests passed: initial load, selection, charts, filters, sort, assumptions, cash and trend backtests.');
+ } finally {await app.close();}
+})().catch(e=>{console.error(e);process.exit(1)});
