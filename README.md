@@ -149,3 +149,37 @@ Source PDFs contain team credentials. They are excluded from Git and app packagi
 See [`docs/AWS_DEPLOYMENT.md`](docs/AWS_DEPLOYMENT.md) and [`deploy/aws_start.sh`](deploy/aws_start.sh). The script installs an Ubuntu EC2 systemd service and defaults to paper mode. It reads credentials from `/etc/roostoo/roostoo.env`; real keys are never committed. Setting `ROOSTOO_LIVE=1` is an explicit account-owner action after reconciliation and prospective paper testing. The runner is the deterministic long-only allocation engine; the regime-adaptive ranking study remains research-only pending a frozen paper period.
 
 The retirement rules and current architecture recommendation are in [`docs/STRATEGY_POLICY.md`](docs/STRATEGY_POLICY.md). The exact titles of the 34 supplied papers are indexed in [`docs/PAPER_TITLES.md`](docs/PAPER_TITLES.md).
+
+### Headless EC2 bot only
+
+The desktop app is not required on AWS. On a fresh Ubuntu EC2 instance, run:
+
+```sh
+git clone https://github.com/yummyweb/roostoo-hk-in-au-competition.git /tmp/roostoo
+sudo install -d -m 0750 /etc/roostoo
+sudo install -m 0600 /tmp/roostoo/deploy/roostoo.env.example /etc/roostoo/roostoo.env
+sudoedit /etc/roostoo/roostoo.env       # add the API key and secret; leave ROOSTOO_LIVE=0 initially
+sudo bash /tmp/roostoo/deploy/aws_start.sh
+sudo journalctl -u roostoo-bot -f
+```
+
+`aws_start.sh` installs Python and systemd, starts only `roostoo.bot`, and
+keeps its persistent ledger at `/opt/roostoo/runs/aws/state.json`. It does not
+install Node, Electron, or the desktop bundle. The service polls once per
+minute, warms completed Binance hourly candles, reads current Roostoo quotes,
+and remains paper-only unless `ROOSTOO_LIVE=1` is set in the root-owned env
+file. After a deliberate live activation, reload with:
+
+```sh
+sudo systemctl restart roostoo-bot
+sudo journalctl -u roostoo-bot -f
+sudo systemctl stop roostoo-bot  # emergency stop; reconcile any in-flight order
+```
+
+For a foreground smoke test without systemd, use paper mode and a finite cycle:
+
+```sh
+cd /opt/roostoo
+set -a; . /etc/roostoo/roostoo.env; set +a
+.venv/bin/python -m roostoo.bot --config "$ROOSTOO_CONFIG" --state runs/aws/manual-state.json --cycles 1
+```
