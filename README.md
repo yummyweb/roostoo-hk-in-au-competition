@@ -176,6 +176,19 @@ sudo journalctl -u roostoo-bot -f
 sudo systemctl stop roostoo-bot  # emergency stop; reconcile any in-flight order
 ```
 
+Check the headless service logs with:
+
+```sh
+sudo systemctl status roostoo-bot --no-pager
+sudo journalctl -u roostoo-bot -n 100 --no-pager   # recent entries
+sudo journalctl -u roostoo-bot -f                  # follow live output
+sudo journalctl -u roostoo-bot -b --no-pager       # logs since this boot
+```
+
+The runner also writes its durable event ledger to
+`/opt/roostoo/runs/aws/state.jsonl`. Inspect it with
+`sudo tail -f /opt/roostoo/runs/aws/state.jsonl`.
+
 For a foreground smoke test without systemd, use paper mode and a finite cycle:
 
 ```sh
