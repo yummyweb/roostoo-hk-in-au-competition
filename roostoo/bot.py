@@ -52,7 +52,9 @@ def plan_order(state,wallet,quotes,targets,rules,c,now):
         if rules[pair].valid(amount,fill):
             orders.append({'pair':pair,'side':side,'quantity':amount,'reference_price':fill,'signal_time':now,
                            'priority':abs(delta)+(equity if side=='SELL' else 0),
-                           'reason':'Drawdown halt: reduce exposure' if halted else 'Daily volatility allocation: rebalance toward target',
+                           'reason':'Drawdown halt: reduce exposure' if halted else
+                                   ('Regime-adaptive rotation: rebalance confirmed trend leaders' if c.rank_model=='regime_adaptive'
+                                    else 'Daily volatility allocation: rebalance toward target'),
                            'target_weight':targets.get(pair,0)})
     chosen=sorted(orders,key=lambda o:(-o['priority'],o['pair']))[0] if orders else None
     return chosen,{'equity':equity,'cash':cash,'peak':peak,'halted':halted}
@@ -61,8 +63,8 @@ def plan_order(state,wallet,quotes,targets,rules,c,now):
 class Runner:
     def __init__(self,config,path,client=None,live=False):
         config.validate()
-        if config.strategy!='allocation' or config.allow_short:
-            raise ValueError('The autonomous runner currently supports long-only allocation only')
+        if config.strategy not in ('allocation','cross_asset') or config.allow_short:
+            raise ValueError('The autonomous runner currently supports long-only allocation and regime-adaptive cross-asset modes only')
         self.c=config;self.path=Path(path);self.path.parent.mkdir(parents=True,exist_ok=True)
         self.client=client or Client();self.live=live
         digest=hashlib.sha256(json.dumps(asdict(config),sort_keys=True).encode()).hexdigest()
@@ -125,13 +127,46 @@ class Runner:
                 with urlopen('https://data-api.binance.vision/api/v3/klines?'+query,timeout=20) as response:batch=json.load(response)
                 if not batch:raise ValueError(f'Missing warmup candles: {pair}')
                 rows=batch+rows;end=int(batch[0][0])-1
-            indicator=Indicators(self.c);previous=None
+            indicator=Indicators(self.c);previous=None; closes=[]; dollar_volumes=[]
             for row in rows:
                 bar=Bar(int(row[0]),pair,*(float(row[i]) for i in (1,2,3,4,5)));bar.validate()
                 if previous is not None and bar.timestamp-previous!=HOUR:raise ValueError(f'Historical data gap: {pair}')
                 if bar.timestamp+HOUR>now:raise ValueError('Incomplete candle rejected')
-                features[pair]=indicator.update(bar);previous=bar.timestamp
+                features[pair]=indicator.update(bar); closes.append(bar.close)
+                dollar_volumes.append(bar.close*bar.volume); previous=bar.timestamp
             if previous!=(hour-1)*HOUR:raise ValueError(f'Stale history: {pair}')
+            f=features[pair]
+            def trailing_return(window):
+                return closes[-1]/closes[-window-1]-1 if len(closes)>window else 0.
+            f.update(momentum_short=trailing_return(self.c.momentum),
+                     momentum_12=trailing_return(12), momentum_24=trailing_return(24),
+                     momentum_48=trailing_return(48), momentum_72=trailing_return(72),
+                     momentum_168=trailing_return(168),
+                     dollar_volume=sum(dollar_volumes[-168:])/min(168,len(dollar_volumes)))
+            f['trend_strength']=sum(f[k]>0 for k in ('momentum_short','momentum_24','momentum_72','momentum_168'))/4
+        if self.c.rank_model=='regime_adaptive':
+            all_features=list(features.values())
+            breadth_short=sum(f['momentum_short']>0 for f in all_features)/len(all_features)
+            breadth_48=sum(f['momentum_48']>0 for f in all_features)/len(all_features)
+            breadth_168=sum(f['momentum_168']>0 for f in all_features)/len(all_features)
+            basket_short=sum(f['momentum_short'] for f in all_features)/len(all_features)
+            basket_48=sum(f['momentum_48'] for f in all_features)/len(all_features)
+            if breadth_48>=.60 and breadth_168>=.55 and basket_48>0:
+                regime='BULL'
+            elif breadth_short>=.52 and basket_short>0 and basket_48<0:
+                regime='RECOVERY'
+            elif breadth_short<=.38 and breadth_48<=.45 and basket_48<0:
+                regime='BEAR'
+            else:
+                regime='CHOP'
+            previous_regime=self.state.get('market_regime')
+            age=int(self.state.get('regime_age',0))+1 if previous_regime==regime else 1
+            self.state.update(market_regime=regime,regime_age=age)
+            for f in features.values():
+                f.update(market_regime=regime,regime_age=age,
+                         market_breadth_short=breadth_short,market_breadth_48=breadth_48,
+                         market_breadth_168=breadth_168,market_return_short=basket_short,
+                         market_return_48=basket_48)
         self.features=features;self.feature_hour=hour
 
     def submit(self,intent,quotes,now):
@@ -180,8 +215,14 @@ class Runner:
         if self.state.get('pending') and now-self.state['pending']['signal_time']>=60000:
             self.submit(self.state['pending'],quotes,now)
         day=now//(self.c.rebalance_bars*HOUR)
-        if self.state['target_day']!=day:
+        target_due=self.state['target_day']!=day
+        if self.c.rank_model=='regime_adaptive':
+            target_due = target_due or self.state.get('target_regime')!=self.state.get('market_regime')
+            target_due = target_due or self.state.get('regime_age',0)==self.c.regime_hold_bars
+        if target_due:
             self.state['targets']=allocation_targets(self.features,self.c);self.state['target_day']=day
+            if self.c.rank_model=='regime_adaptive':
+                self.state['target_regime']=self.state.get('market_regime')
         intent,marks=plan_order(self.state,self.wallet(),quotes,self.state['targets'],self.rules,self.c,now)
         self.state.update(marks)
         if marks['halted']:self.state['targets']={}

@@ -125,6 +125,8 @@ def run_allocation(bars,c,manifest,rules,start_index=0,precomputed=None):
 
 def allocation_targets(features,c,interval=3600000):
     """Shared causal allocation rule used by replay and the autonomous runner."""
+    if c.rank_model == 'regime_adaptive':
+        return regime_adaptive_targets(features, c, interval)
     ranked=[]
     for pair,f in features.items():
         if f['ready'] and f['momentum']>0 and f['close']>f['slow']:
@@ -137,3 +139,40 @@ def allocation_targets(features,c,interval=3600000):
     risk=sum(raw[p]*sigma for p,score,sigma in ranked)
     scale=min(1,c.target_volatility/risk) if risk else 0
     return {p:w*scale for p,w in raw.items()}
+
+
+def regime_adaptive_targets(features, c, interval=3600000):
+    """Low-turnover live version of the causal regime-adaptive ranker.
+
+    Features are built from completed Binance candles and execution is limited
+    to the configured Roostoo universe. The short momentum field is deliberately
+    configurable through ``Config.momentum`` for short competition windows.
+    """
+    ready=[f for f in features.values() if f.get('ready')]
+    if not ready:
+        return {}
+    state=ready[0].get('market_regime','CHOP')
+    if state not in ('BULL','RECOVERY') or ready[0].get('regime_age',0) < c.regime_hold_bars:
+        return {}
+    move_key='momentum_72' if state=='BULL' else 'momentum_short'
+    candidates=[]
+    for pair,f in features.items():
+        if not f.get('ready') or f.get('trend_strength',0) < c.rank_min_trend_strength:
+            continue
+        if f.get('close',0) <= f.get('slow',0):
+            continue
+        if f.get(move_key,0) < c.regime_min_move:
+            continue
+        sigma=max(.2,float(f.get('volatility',0))*math.sqrt(365*86400000/interval))
+        setup=float(f.get(move_key,0))/sigma
+        candidates.append((pair,f,setup,sigma))
+    liquid=sorted(candidates,key=lambda row:(-row[1].get('dollar_volume',0),row[0]))[:c.rank_liquidity_top_n]
+    ranked=sorted(liquid,key=lambda row:(-row[2],row[0]))[:c.top_n]
+    if not ranked:
+        return {}
+    inverses=sum(1/r[3] for r in ranked)
+    raw={p:min(c.max_position,c.max_exposure/sigma/inverses) for p,_,_,sigma in ranked}
+    risk=sum(raw[p]*sigma for p,_,_,sigma in ranked)
+    target=c.target_volatility if state=='BULL' else c.target_volatility*.5
+    scale=min(1,target/risk) if risk else 0
+    return {p:w*scale for p,w in raw.items() if w>0}

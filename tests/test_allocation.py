@@ -3,6 +3,7 @@ from dataclasses import replace
 from roostoo.data import synthetic
 from roostoo.engine import run
 from roostoo.strategy import Config,Indicators,rotation_targets
+from roostoo.allocation import regime_adaptive_targets
 from itertools import groupby
 
 
@@ -42,3 +43,15 @@ class AllocationTests(unittest.TestCase):
         self.assertEqual(list(rotation_targets(f,Config(top_n=1))),['ETH/USD'])
         targets=rotation_targets(f,Config(top_n=1,allow_short=True))
         self.assertEqual(targets['SOL/USD'][0],'SHORT')
+
+    def test_regime_targets_require_persistent_bull_and_short_hurdle(self):
+        c=Config(strategy='cross_asset',rank_model='regime_adaptive',top_n=2,
+                 max_position=.3,target_volatility=.8,rank_min_trend_strength=.5,
+                 regime_min_move=.02,regime_hold_bars=24)
+        f=dict(ready=True,market_regime='BULL',regime_age=24,close=110,slow=100,
+               volatility=.01,trend_strength=.75,momentum_short=.04,momentum_72=.08,
+               dollar_volume=10.)
+        targets=regime_adaptive_targets({'BTC/USD':f,'ETH/USD':dict(f,dollar_volume=9.)},c)
+        self.assertEqual(set(targets),{'BTC/USD','ETH/USD'})
+        self.assertEqual(regime_adaptive_targets({'BTC/USD':dict(f,market_regime='CHOP')},c),{})
+        self.assertEqual(regime_adaptive_targets({'BTC/USD':dict(f,momentum_72=.01)},c),{})

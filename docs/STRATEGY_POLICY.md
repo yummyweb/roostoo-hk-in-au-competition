@@ -44,9 +44,12 @@ low-turnover pipeline:
 2. Within the current trade-enabled universe, require a positive slow trend,
    multi-horizon trend strength and a 3–5% move hurdle. Rank liquid candidates,
    select at most three, rebalance every 72 hours with a 5% drift band, and use
-   inverse-volatility weights with an exploratory 80% target.
+   inverse-volatility weights with an exploratory 80% target. The paper
+   architecture used a 3–5% hurdle; the short-window live paper preset uses a
+   2% hurdle and must be evaluated separately.
 
-The live runner currently implements the deterministic allocation family and
-does not pretend to implement this research-only regime ranker. Any promotion
+The headless runner now implements this regime-adaptive logic on its configured
+50-pair Roostoo execution universe. It remains exploratory: the broad
+222-asset classifier study is not used to place live orders. Any promotion
 requires a frozen paper period, current Roostoo quotes, and reconciliation of
 the exact account and pair rules.

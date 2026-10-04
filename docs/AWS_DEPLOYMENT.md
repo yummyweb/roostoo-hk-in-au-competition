@@ -18,12 +18,30 @@ sudo bash /tmp/roostoo/deploy/aws_start.sh
 ```
 
 Use `ROOSTOO_UNIVERSE_CONFIG=/opt/roostoo/config/universe-50.json` for the fixed
-50-pair allocation universe. The default `config/live_candidate.json` uses the
-same slow, strength-gated allocation family selected for research. The runner currently supports the deterministic
-long-only allocation engine; the research-only regime-adaptive ranking study is
-not silently presented as the live implementation. It uses Binance hourly
-candles as a proxy and current Roostoo quotes, so verify the pair list and wallet
-before any live activation.
+50-pair execution universe. The default `config/live_candidate.json` now runs
+the causal regime-adaptive long-only mode: a 12-hour momentum input, 2% move
+hurdle, 24-hour regime confirmation, top three candidates, and 72-hour
+rebalancing. It uses Binance hourly candles as a proxy and current Roostoo
+quotes, so verify the pair list and wallet before any live activation.
+
+The regime runner stays in cash during `BEAR` and `CHOP`. Its live classifier
+uses the configured 50-pair universe; the separate 222-asset classifier was
+research-only discovery data.
+
+If an existing state file was created with the previous allocation config, the
+config hash intentionally blocks an automatic strategy switch. In paper mode,
+archive the old ledger and start a fresh paper session:
+
+```sh
+sudo systemctl stop roostoo-bot
+sudo cp /opt/roostoo/runs/aws/state.json /opt/roostoo/runs/aws/state.allocation.json
+sudo cp /opt/roostoo/runs/aws/state.jsonl /opt/roostoo/runs/aws/state.allocation.jsonl
+sudo rm /opt/roostoo/runs/aws/state.json /opt/roostoo/runs/aws/state.jsonl
+sudo systemctl start roostoo-bot
+```
+
+For a live account, reconcile holdings and open orders first; do not delete a
+state file containing an unresolved live position or order.
 
 Before setting `ROOSTOO_LIVE=1`, reconcile the account, run the finite general
 account canary, and start with paper mode. Check:
