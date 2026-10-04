@@ -227,9 +227,14 @@ class Runner:
         self.state.update(marks)
         if marks['halted']:self.state['targets']={}
         self.state['pending']=intent
-        self.log({'event':'snapshot','timestamp':now,**marks,'targets':self.state['targets'],'pending':intent,'quotes':quotes})
+        self.log({'event':'snapshot','timestamp':now,**marks,'market_regime':self.state.get('market_regime'),
+                  'regime_age':self.state.get('regime_age',0),'targets':self.state['targets'],
+                  'pending':intent,'quotes':quotes})
         save_state(self.path,self.state)
-        return {'mode':self.state['mode'],'equity':marks['equity'],'fills':self.state['fills'],'halted':marks['halted'],'pending':intent['pair'] if intent else None}
+        return {'mode':self.state['mode'],'equity':marks['equity'],'fills':self.state['fills'],
+                'halted':marks['halted'],'market_regime':self.state.get('market_regime'),
+                'regime_age':self.state.get('regime_age',0),
+                'pending':intent['pair'] if intent else None}
 
 
 def main():
