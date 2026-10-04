@@ -5,9 +5,10 @@ a Python virtual environment, writes a locked systemd unit, and starts the
 persistent Roostoo runner. It is repeatable and keeps the state ledger under
 `/opt/roostoo/runs/aws/`.
 
-The script defaults to paper mode. It only passes `--live` when the root-owned
-`/etc/roostoo/roostoo.env` contains `ROOSTOO_LIVE=1`. The repository contains no
-credentials; enter them on the host:
+The script defaults to paper mode. The bot reads `ROOSTOO_LIVE` from the
+root-owned `/etc/roostoo/roostoo.env` on every start, so changing that value and
+restarting the service changes the mode. The repository contains no credentials;
+enter them on the host:
 
 ```sh
 git clone https://github.com/yummyweb/roostoo-hk-in-au-competition.git /tmp/roostoo

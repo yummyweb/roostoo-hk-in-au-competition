@@ -245,7 +245,8 @@ def main():
         try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:raise SystemExit('Another bot owns this state; refusing duplicate execution')
         client=Client(os.environ.get('ROOSTOO_API_KEY',''),os.environ.get('ROOSTOO_API_SECRET',''))
-        runner=Runner(c,a.state,client,a.live);runner.bootstrap();cycles=0
+        live=a.live or os.environ.get('ROOSTOO_LIVE','0')=='1'
+        runner=Runner(c,a.state,client,live);runner.bootstrap();cycles=0
         while a.cycles==0 or cycles<a.cycles:
             try:print(json.dumps(runner.cycle()),flush=True)
             except Exception as e:

@@ -46,8 +46,6 @@ set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
-LIVE_FLAG=""
-if [[ "${ROOSTOO_LIVE:-0}" == "1" ]]; then LIVE_FLAG="--live"; fi
 CONFIG_PATH="${ROOSTOO_CONFIG:-$APP_DIR/config/live_candidate.json}"
 UNIVERSE_PATH="${ROOSTOO_UNIVERSE_CONFIG:-$APP_DIR/config/universe-50.json}"
 STATE_PATH="$APP_DIR/runs/aws/state.json"
@@ -66,7 +64,7 @@ EnvironmentFile=$ENV_FILE
 Environment=PYTHONUNBUFFERED=1
 Environment=ROOSTOO_CONFIG=$CONFIG_PATH
 Environment=ROOSTOO_UNIVERSE_CONFIG=$UNIVERSE_PATH
-ExecStart=$APP_DIR/.venv/bin/python -m roostoo.bot --config $CONFIG_PATH --state $STATE_PATH $LIVE_FLAG
+ExecStart=$APP_DIR/.venv/bin/python -m roostoo.bot --config $CONFIG_PATH --state $STATE_PATH
 Restart=on-failure
 RestartSec=30
 NoNewPrivileges=true
