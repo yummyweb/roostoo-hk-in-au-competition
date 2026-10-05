@@ -59,6 +59,15 @@ CONFIG_PATH="${ROOSTOO_CONFIG:-$APP_DIR/config/live_candidate.json}"
 UNIVERSE_PATH="${ROOSTOO_UNIVERSE_CONFIG:-$APP_DIR/config/universe-50.json}"
 STATE_PATH="${ROOSTOO_STATE:-$APP_DIR/runs/aws/state.json}"
 
+# A newly selected ledger is sometimes created as an empty .json file before
+# the first start. Preserve that placeholder and let roostoo.bot initialize a
+# fresh state instead of failing with JSONDecodeError.
+if [[ -f "$STATE_PATH" && ! -s "$STATE_PATH" ]]; then
+  EMPTY_STATE_BACKUP="${STATE_PATH}.empty.$(date +%s)"
+  mv "$STATE_PATH" "$EMPTY_STATE_BACKUP"
+  echo "Moved empty state placeholder to $EMPTY_STATE_BACKUP"
+fi
+
 cat > "/etc/systemd/system/$SERVICE" <<UNIT
 [Unit]
 Description=Roostoo competition bot (explicit paper/live mode)
