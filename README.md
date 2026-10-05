@@ -170,30 +170,52 @@ supports its Amazon Linux image through `dnf`.
 
 ### Updating the running bot
 
-Use the Session Manager terminal to pull the approved revision and restart the
-service:
+For strategy/config changes on an existing account, use the updater from the
+Session Manager terminal. The first time, pull to obtain the new script:
 
 ```sh
 cd /opt/roostoo
+sudo systemctl stop roostoo-bot
 sudo git pull --ff-only origin main
-sudo systemctl restart roostoo-bot
+sudo bash deploy/aws_update.sh
 sudo systemctl status roostoo-bot --no-pager
 sudo journalctl -u roostoo-bot -n 50 --no-pager
 ```
 
-If dependencies, the systemd unit, or deployment files changed, rerun the
-installer instead; it pulls the repository and regenerates the unit before
-restarting the service:
+For subsequent updates, the updater itself stops the service, pulls `main`,
+migrates the selected ledger, regenerates the unit, and starts the service:
 
 ```sh
-sudo bash /opt/roostoo/deploy/aws_start.sh
+sudo bash /opt/roostoo/deploy/aws_update.sh
 ```
 
-The live candidate now permits an immediate qualifying signal, checks targets
-hourly, and uses a 1% rebalance band. A configuration change changes the state
-ledger hash. Reconcile the account first and use a new live ledger only when the
-wallet is flat and matches `initial_cash`; never delete a ledger containing an
-unresolved live intent.
+The updater backs up the state beside the existing ledger and appends a
+`config_migration` event to its journal. It preserves fills, cash, inventory,
+equity peak, drawdown halt, and last submission time. Unsubmitted pending
+signals and cached targets are cleared so the new strategy recalculates them.
+It supports long-only allocation and regime-adaptive cross-asset settings;
+it does not convert arbitrary strategy schemas. Mode switches, changes to
+`initial_cash`, unresolved submissions, locked balances, exchange pending
+orders, shorts, and held assets outside the new universe block migration.
+A failed migration leaves the service stopped and the ledger unchanged.
+The previous config must be verifiable from the existing `.jsonl` journal.
+
+The updater reads `ROOSTOO_CONFIG` and `ROOSTOO_STATE` from
+`/etc/roostoo/roostoo.env`. Keep the **existing live ledger path**. If your config
+is a local copy such as `live_candidate_updated.json`, Git will not update that
+copy. To use the repository's current live preset, edit the environment file
+before running the updater:
+
+```sh
+sudoedit /etc/roostoo/roostoo.env
+# Set ROOSTOO_CONFIG=/opt/roostoo/config/live_candidate.json
+# Keep ROOSTOO_STATE pointing to the existing live ledger.
+```
+
+The live candidate permits an immediate qualifying signal, refreshes targets
+hourly, and uses a 1% rebalance band. Updating never clears a drawdown halt or
+guarantees that a trade will occur. Plain `git pull` plus restart still blocks
+an active ledger whose config hash changed; use `aws_update.sh` for that case.
 
 `aws_start.sh` installs Python and systemd, starts only `roostoo.bot`, and
 keeps its persistent ledger at `/opt/roostoo/runs/aws/state.json`. It does not

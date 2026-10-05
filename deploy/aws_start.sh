@@ -24,8 +24,10 @@ dnf install -y ca-certificates git python3 python3-pip
 
 if [[ -d "$APP_DIR/.git" ]]; then
   git -C "$APP_DIR" remote set-url origin "$REPO_URL"
-  git -C "$APP_DIR" fetch --prune origin
-  git -C "$APP_DIR" pull --ff-only origin "$(git -C "$APP_DIR" symbolic-ref --short HEAD 2>/dev/null || echo main)"
+  if [[ "${ROOSTOO_SKIP_PULL:-0}" != "1" ]]; then
+    git -C "$APP_DIR" fetch --prune origin
+    git -C "$APP_DIR" pull --ff-only origin "$(git -C "$APP_DIR" symbolic-ref --short HEAD 2>/dev/null || echo main)"
+  fi
 else
   install -d -m 0755 "$(dirname "$APP_DIR")"
   git clone "$REPO_URL" "$APP_DIR"

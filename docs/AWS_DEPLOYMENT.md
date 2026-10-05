@@ -1,6 +1,6 @@
 # AWS deployment
 
-`deploy/aws_start.sh` installs the repository on a Fedora/RHEL or Ubuntu EC2 instance, creates
+`deploy/aws_start.sh` installs the repository on an Amazon Linux EC2 instance, creates
 a Python virtual environment, writes a locked systemd unit, and starts the
 persistent Roostoo runner. It is repeatable and keeps the state ledger under
 `/opt/roostoo/runs/aws/`.
@@ -72,8 +72,10 @@ sudo systemctl show roostoo-bot -p ExecStart -p ActiveState -p SubState
 - `"mode": "paper"` means orders are simulated locally. The file named
   `live_candidate.json` selects the strategy; it does not enable live orders.
 - `State belongs to a different mode/config` means the selected ledger was
-  created in another mode or with another configuration. Follow the transition
-  procedure below; preserve live ledgers and unresolved intents.
+  created in another mode or with another configuration. For strategy updates
+  in the same mode, use `sudo bash /opt/roostoo/deploy/aws_update.sh` as described
+  in the [README](../README.md#updating-the-running-bot). For a paper/live mode
+  switch, follow the transition procedure below.
 - `"mode": "live"` with `"pending": null` can be an intentional wait. `BEAR`
   and `CHOP` hold cash; `BULL` and `RECOVERY` still require qualifying assets.
   The current live candidate has no regime-age hold, so it can target assets on
