@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Idempotent Fedora/RHEL or Ubuntu EC2 installer. It installs the repository and
-# a locked systemd runner. Live orders require ROOSTOO_LIVE=1 in the root-owned
+# Idempotent Amazon Linux EC2 installer. It installs the repository and a locked
+# systemd runner. Live orders require ROOSTOO_LIVE=1 in the root-owned
 # env file; the default is paper mode. Credentials are deliberately read from
 # that host-only file and are never written into the repository.
 REPO_URL="${REPO_URL:-https://github.com/yummyweb/roostoo-hk-in-au-competition.git}"
@@ -16,16 +16,11 @@ if [[ "$(id -u)" -ne 0 ]]; then
   exit 1
 fi
 
-if command -v dnf >/dev/null 2>&1; then
-  dnf install -y ca-certificates git python3 python3-pip
-elif command -v apt-get >/dev/null 2>&1; then
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get update
-  apt-get install -y --no-install-recommends ca-certificates git python3 python3-venv
-else
-  echo "Neither dnf nor apt-get is available; install Python 3, pip, git, and CA certificates first." >&2
+if ! command -v dnf >/dev/null 2>&1; then
+  echo "dnf is required; this installer targets the hackathon Amazon Linux image." >&2
   exit 1
 fi
+dnf install -y ca-certificates git python3 python3-pip
 
 if [[ -d "$APP_DIR/.git" ]]; then
   git -C "$APP_DIR" remote set-url origin "$REPO_URL"

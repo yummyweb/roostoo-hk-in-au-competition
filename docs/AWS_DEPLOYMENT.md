@@ -19,7 +19,7 @@ sudoedit /etc/roostoo/roostoo.env
 sudo bash /tmp/roostoo/deploy/aws_start.sh
 ```
 
-The installer uses `dnf` when available and falls back to `apt-get` on Ubuntu.
+The installer uses `dnf`, matching the hackathon Amazon Linux image.
 
 ## Hackathon AWS template
 
