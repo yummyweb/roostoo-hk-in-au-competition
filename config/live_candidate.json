@@ -15,13 +15,13 @@
   "allow_short": false,
   "cooldown_bars": 6,
   "max_hold_bars": 96,
-  "rebalance_bars": 72,
+  "rebalance_bars": 1,
   "top_n": 3,
   "target_volatility": 0.8,
-  "rebalance_band": 0.05,
+  "rebalance_band": 0.01,
   "rank_model": "regime_adaptive",
   "rank_liquidity_top_n": 50,
   "rank_min_trend_strength": 0.5,
   "regime_min_move": 0.02,
-  "regime_hold_bars": 24
+  "regime_hold_bars": 0
 }

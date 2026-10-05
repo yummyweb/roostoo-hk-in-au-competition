@@ -53,7 +53,7 @@ class Config:
             raise ValueError('Trend-strength gate must be between 0 and 1')
         if not .01 <= self.regime_min_move <= .5:
             raise ValueError('Invalid regime move hurdle')
-        if type(self.regime_hold_bars) is not int or not 24 <= self.regime_hold_bars <= 720:
+        if type(self.regime_hold_bars) is not int or not 0 <= self.regime_hold_bars <= 720:
             raise ValueError('Invalid regime holding period')
         if not 2 <= self.fast < self.slow <= 1000 or not 2 <= self.momentum <= 1000:
             raise ValueError('Require 2 <= fast < slow <= 1000 and a valid momentum window')

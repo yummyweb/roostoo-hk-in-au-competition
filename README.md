@@ -146,7 +146,7 @@ Source PDFs contain team credentials. They are excluded from Git and app packagi
 
 ## AWS runner
 
-See [`docs/AWS_DEPLOYMENT.md`](docs/AWS_DEPLOYMENT.md) and [`deploy/aws_start.sh`](deploy/aws_start.sh). The script installs an Ubuntu EC2 systemd service and defaults to paper mode. It reads credentials from `/etc/roostoo/roostoo.env`; real keys are never committed. Setting `ROOSTOO_LIVE=1` is an explicit account-owner action after reconciliation and prospective paper testing. The runner now uses the causal regime-adaptive long-only configuration from `config/live_candidate.json`.
+See [`docs/AWS_DEPLOYMENT.md`](docs/AWS_DEPLOYMENT.md) and [`deploy/aws_start.sh`](deploy/aws_start.sh). The script installs an Amazon Linux EC2 systemd service and defaults to paper mode. It reads credentials from `/etc/roostoo/roostoo.env`; real keys are never committed. Setting `ROOSTOO_LIVE=1` is an explicit account-owner action after reconciliation and prospective paper testing. The runner now uses the causal regime-adaptive long-only configuration from `config/live_candidate.json`.
 
 The retirement rules and current architecture recommendation are in [`docs/STRATEGY_POLICY.md`](docs/STRATEGY_POLICY.md). The exact titles of the 34 supplied papers are indexed in [`docs/PAPER_TITLES.md`](docs/PAPER_TITLES.md).
 
@@ -167,6 +167,33 @@ For the hackathon account, launch the provided `Hackathon-Starter-Template` in
 `ap-southeast-2` (Sydney), then use EC2 Session Manager to open the terminal.
 SSH and EC2 Instance Connect are unavailable in that account; the installer
 supports its Amazon Linux image through `dnf`.
+
+### Updating the running bot
+
+Use the Session Manager terminal to pull the approved revision and restart the
+service:
+
+```sh
+cd /opt/roostoo
+sudo git pull --ff-only origin main
+sudo systemctl restart roostoo-bot
+sudo systemctl status roostoo-bot --no-pager
+sudo journalctl -u roostoo-bot -n 50 --no-pager
+```
+
+If dependencies, the systemd unit, or deployment files changed, rerun the
+installer instead; it pulls the repository and regenerates the unit before
+restarting the service:
+
+```sh
+sudo bash /opt/roostoo/deploy/aws_start.sh
+```
+
+The live candidate now permits an immediate qualifying signal, checks targets
+hourly, and uses a 1% rebalance band. A configuration change changes the state
+ledger hash. Reconcile the account first and use a new live ledger only when the
+wallet is flat and matches `initial_cash`; never delete a ledger containing an
+unresolved live intent.
 
 `aws_start.sh` installs Python and systemd, starts only `roostoo.bot`, and
 keeps its persistent ledger at `/opt/roostoo/runs/aws/state.json`. It does not
