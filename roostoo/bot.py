@@ -68,11 +68,24 @@ class Runner:
         self.c=config;self.path=Path(path);self.path.parent.mkdir(parents=True,exist_ok=True)
         self.client=client or Client();self.live=live
         digest=hashlib.sha256(json.dumps(asdict(config),sort_keys=True).encode()).hexdigest()
+        requested_mode='live' if live else 'paper'
         self.state=json.loads(self.path.read_text()) if self.path.exists() else {
             'mode':'live' if live else 'paper','config_hash':digest,'cash':config.initial_cash,'inventory':{},'peak':config.initial_cash,
             'halted':False,'last_submit':0,'inflight':None,'pending':None,'targets':{},'target_day':None,'fills':0}
-        if self.state['mode']!=('live' if live else 'paper') or self.state['config_hash']!=digest:
-            raise ValueError('State belongs to a different mode/config; do not silently reset its ledger')
+        self.migrated_state=False
+        if self.state['mode']!=requested_mode or self.state['config_hash']!=digest:
+            # A config-only change can be adopted without discarding history
+            # when this ledger has never traded. Active ledgers still require
+            # explicit reconciliation and remain blocked.
+            inventory=self.state.get('inventory',{})
+            inactive=(not self.state.get('halted') and not self.state.get('inflight')
+                      and not self.state.get('pending') and not self.state.get('fills')
+                      and not any(abs(float(q))>1e-12 for q in inventory.values()))
+            if not inactive:
+                raise ValueError('State belongs to a different mode/config; reconcile the active ledger before changing it')
+            self.state.update(mode=requested_mode,config_hash=digest,targets={},target_day=None,
+                              target_regime=None,market_regime=None,regime_age=0)
+            self.migrated_state=True
         if self.state.get('inflight'):
             raise RuntimeError('Unresolved submitted order. Reconcile the saved intent with query_order and balances before restarting.')
         self.rules=None;self.features=None;self.feature_hour=None;self.info=None
@@ -93,7 +106,7 @@ class Runner:
         self.rules=load_rules(self.info,pairs)
         if self.live:
             b=self.wallet()
-            if abs(float(b.get('USD',{}).get('Free',0))-self.c.initial_cash)>.05 and not self.path.exists():
+            if abs(float(b.get('USD',{}).get('Free',0))-self.c.initial_cash)>.05 and (not self.path.exists() or self.migrated_state):
                 raise ValueError('A new live session needs a flat wallet matching initial_cash; do not silently adopt an unknown portfolio')
             if self.client.short_positions().get('Positions'):raise ValueError('Existing short positions are outside the allocation strategy')
             try:
@@ -101,7 +114,7 @@ class Runner:
                 if pending.get('TotalPending',0):raise ValueError('Existing pending exchange orders require reconciliation')
             except APIError as e:
                 if 'no pending order' not in str(e).lower():raise
-        self.log({'event':'start','mode':self.state['mode'],'config':asdict(self.c),'source_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),'timestamp':int(time.time()*1000)})
+        self.log({'event':'start','mode':self.state['mode'],'config':asdict(self.c),'state_migrated':self.migrated_state,'source_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),'timestamp':int(time.time()*1000)})
         save_state(self.path,self.state)
 
     def wallet(self):
