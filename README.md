@@ -168,7 +168,10 @@ keeps its persistent ledger at `/opt/roostoo/runs/aws/state.json`. It does not
 install Node, Electron, or the desktop bundle. The service polls once per
 minute, warms completed Binance hourly candles, reads current Roostoo quotes,
 and remains paper-only unless `ROOSTOO_LIVE=1` is set in the root-owned env
-file. After a deliberate live activation, reload with:
+file. An existing paper ledger cannot be reused in live mode; follow the
+[paper-to-live transition procedure](docs/AWS_DEPLOYMENT.md#switching-an-existing-paper-deployment-to-live)
+to preserve it and select the correct ledger. For subsequent restarts using
+the same mode and ledger:
 
 ```sh
 sudo systemctl restart roostoo-bot
@@ -194,5 +197,5 @@ For a foreground smoke test without systemd, use paper mode and a finite cycle:
 ```sh
 cd /opt/roostoo
 set -a; . /etc/roostoo/roostoo.env; set +a
-.venv/bin/python -m roostoo.bot --config "$ROOSTOO_CONFIG" --state runs/aws/manual-state.json --cycles 1
+ROOSTOO_LIVE=0 .venv/bin/python -m roostoo.bot --config "$ROOSTOO_CONFIG" --state runs/aws/manual-state.json --cycles 1
 ```

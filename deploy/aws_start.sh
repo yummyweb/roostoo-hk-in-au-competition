@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Idempotent Ubuntu EC2 installer. It installs the repository and a locked
-# systemd runner. Live orders require ROOSTOO_LIVE=1 in the root-owned env file;
-# the default is paper mode.
+# Idempotent Fedora/RHEL or Ubuntu EC2 installer. It installs the repository and
+# a locked systemd runner. Live orders require ROOSTOO_LIVE=1 in the root-owned
+# env file; the default is paper mode. Credentials are deliberately read from
+# that host-only file and are never written into the repository.
 REPO_URL="${REPO_URL:-https://github.com/yummyweb/roostoo-hk-in-au-competition.git}"
 APP_DIR="${APP_DIR:-/opt/roostoo}"
 ENV_DIR="${ENV_DIR:-/etc/roostoo}"
@@ -15,9 +16,16 @@ if [[ "$(id -u)" -ne 0 ]]; then
   exit 1
 fi
 
-export DEBIAN_FRONTEND=noninteractive
-apt-get update
-apt-get install -y --no-install-recommends ca-certificates git python3 python3-venv
+if command -v dnf >/dev/null 2>&1; then
+  dnf install -y ca-certificates git python3 python3-pip
+elif command -v apt-get >/dev/null 2>&1; then
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y --no-install-recommends ca-certificates git python3 python3-venv
+else
+  echo "Neither dnf nor apt-get is available; install Python 3, pip, git, and CA certificates first." >&2
+  exit 1
+fi
 
 if [[ -d "$APP_DIR/.git" ]]; then
   git -C "$APP_DIR" remote set-url origin "$REPO_URL"
@@ -46,9 +54,15 @@ set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
+if [[ "${ROOSTOO_LIVE:-0}" == "1" ]]; then
+  [[ -n "${ROOSTOO_API_KEY:-}" && -n "${ROOSTOO_API_SECRET:-}" ]] || {
+    echo "ROOSTOO_LIVE=1 requires ROOSTOO_API_KEY and ROOSTOO_API_SECRET in $ENV_FILE" >&2
+    exit 1
+  }
+fi
 CONFIG_PATH="${ROOSTOO_CONFIG:-$APP_DIR/config/live_candidate.json}"
 UNIVERSE_PATH="${ROOSTOO_UNIVERSE_CONFIG:-$APP_DIR/config/universe-50.json}"
-STATE_PATH="$APP_DIR/runs/aws/state.json"
+STATE_PATH="${ROOSTOO_STATE:-$APP_DIR/runs/aws/state.json}"
 
 cat > "/etc/systemd/system/$SERVICE" <<UNIT
 [Unit]
@@ -77,6 +91,8 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
-systemctl enable --now "$SERVICE"
-systemctl --no-pager --full status "$SERVICE" || true
-echo "Started $SERVICE in ${ROOSTOO_LIVE:-0} mode. Logs: journalctl -u $SERVICE -f"
+systemctl enable "$SERVICE"
+# enable --now leaves an already running process on its old code/environment.
+systemctl restart "$SERVICE"
+systemctl --no-pager --full status "$SERVICE"
+echo "Restarted $SERVICE with ROOSTOO_LIVE=${ROOSTOO_LIVE:-0}, state=$STATE_PATH. Logs: journalctl -u $SERVICE -f"

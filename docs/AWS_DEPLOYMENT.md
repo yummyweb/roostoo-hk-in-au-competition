@@ -1,13 +1,14 @@
 # AWS deployment
 
-`deploy/aws_start.sh` installs the repository on an Ubuntu EC2 instance, creates
+`deploy/aws_start.sh` installs the repository on a Fedora/RHEL or Ubuntu EC2 instance, creates
 a Python virtual environment, writes a locked systemd unit, and starts the
 persistent Roostoo runner. It is repeatable and keeps the state ledger under
 `/opt/roostoo/runs/aws/`.
 
 The script defaults to paper mode. The bot reads `ROOSTOO_LIVE` from the
-root-owned `/etc/roostoo/roostoo.env` on every start, so changing that value and
-restarting the service changes the mode. The repository contains no credentials;
+root-owned `/etc/roostoo/roostoo.env` on every start. Changing that value requires
+a restart and a ledger belonging to the requested mode: an existing paper
+ledger cannot be reused for live execution. The repository contains no credentials;
 enter them on the host:
 
 ```sh
@@ -17,6 +18,8 @@ sudo install -m 0600 /tmp/roostoo/deploy/roostoo.env.example /etc/roostoo/roosto
 sudoedit /etc/roostoo/roostoo.env
 sudo bash /tmp/roostoo/deploy/aws_start.sh
 ```
+
+The installer uses `dnf` when available and falls back to `apt-get` on Ubuntu.
 
 Use `ROOSTOO_UNIVERSE_CONFIG=/opt/roostoo/config/universe-50.json` for the fixed
 50-pair execution universe. The default `config/live_candidate.json` now runs
@@ -28,6 +31,55 @@ quotes, so verify the pair list and wallet before any live activation.
 The regime runner stays in cash during `BEAR` and `CHOP`. Its live classifier
 uses the configured 50-pair universe; the separate 222-asset classifier was
 research-only discovery data.
+
+## Diagnosing no orders
+
+Read the running process's output first:
+
+```sh
+sudo systemctl status roostoo-bot --no-pager
+sudo journalctl -u roostoo-bot -n 100 --no-pager
+sudo systemctl show roostoo-bot -p ExecStart -p ActiveState -p SubState
+```
+
+- `"mode": "paper"` means orders are simulated locally. The file named
+  `live_candidate.json` selects the strategy; it does not enable live orders.
+- `State belongs to a different mode/config` means the selected ledger was
+  created in another mode or with another configuration. Follow the transition
+  procedure below; preserve live ledgers and unresolved intents.
+- `"mode": "live"` with `"pending": null` can be an intentional wait. `BEAR`
+  and `CHOP` hold cash; `BULL` and `RECOVERY` require `regime_age >= 24` and
+  qualifying assets. A new ledger starts confirmation at one observed hourly
+  regime; candle warmup does not backfill that confirmation period.
+- `Cycle blocked:` or a startup traceback identifies an execution/data error.
+  Missing credentials, a starting cash mismatch, stale candles/quotes, and
+  unresolved orders prevent trading. The live starting wallet must be flat and
+  match the configured `initial_cash` (default USD 100,000).
+- A non-null `pending` is queued for a later cycle, at least 60 seconds after
+  the signal. Check the following cycle for a fill or error.
+
+Rerunning `aws_start.sh` now restarts the service so updated code, environment,
+and unit arguments take effect. Previously, `systemctl enable --now` left an
+already running bot on its old settings.
+
+## Switching an existing paper deployment to live
+
+Stop the service and inspect the selected ledger's `mode`, `inflight`, and
+`config_hash`. Reconcile the actual account, including holdings and open orders.
+If the existing ledger is paper-only and this account has no previous live
+session, preserve it and set these values in `/etc/roostoo/roostoo.env`:
+
+```ini
+ROOSTOO_LIVE=1
+ROOSTOO_STATE=/opt/roostoo/runs/aws/live-state.json
+```
+
+Enter the API credentials in the same file and rerun
+`sudo bash /opt/roostoo/deploy/aws_start.sh`. `ROOSTOO_STATE` is embedded in the
+generated unit, so changing it requires rerunning the installer. Keep the path
+under `/opt/roostoo/runs/`, which is writable by the service. Resume the original
+ledger for an existing live session; never create a new ledger to bypass an
+unresolved order or a drawdown halt. Confirm `"mode": "live"` in the journal.
 
 If an existing state file was created with the previous allocation config, the
 config hash intentionally blocks an automatic strategy switch. In paper mode,
