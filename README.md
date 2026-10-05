@@ -163,6 +163,11 @@ sudo bash /tmp/roostoo/deploy/aws_start.sh
 sudo journalctl -u roostoo-bot -f
 ```
 
+For the hackathon account, launch the provided `Hackathon-Starter-Template` in
+`ap-southeast-2` (Sydney), then use EC2 Session Manager to open the terminal.
+SSH and EC2 Instance Connect are unavailable in that account; the installer
+supports its Amazon Linux image through `dnf`.
+
 `aws_start.sh` installs Python and systemd, starts only `roostoo.bot`, and
 keeps its persistent ledger at `/opt/roostoo/runs/aws/state.json`. It does not
 install Node, Electron, or the desktop bundle. The service polls once per

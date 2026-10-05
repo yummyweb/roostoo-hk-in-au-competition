@@ -21,6 +21,33 @@ sudo bash /tmp/roostoo/deploy/aws_start.sh
 
 The installer uses `dnf` when available and falls back to `apt-get` on Ubuntu.
 
+## Hackathon AWS template
+
+The hackathon launch guide requires the AWS account's `ap-southeast-2`
+(Sydney) region, the supplied `Hackathon-Starter-Template`, and a single
+`t3.medium` instance. Launch only one instance and connect through **EC2 →
+Connect → Session Manager**; SSH and EC2 Instance Connect are blocked by the
+event account. The template's Amazon Linux image is why this installer prefers
+`dnf`.
+
+Open a Session Manager terminal, clone the repository, create the protected
+environment file, and run the installer with `sudo`:
+
+```sh
+cd ~
+git clone https://github.com/yummyweb/roostoo-hk-in-au-competition.git /tmp/roostoo
+sudo install -d -m 0750 /etc/roostoo
+sudo install -m 0600 /tmp/roostoo/deploy/roostoo.env.example /etc/roostoo/roostoo.env
+sudoedit /etc/roostoo/roostoo.env
+sudo bash /tmp/roostoo/deploy/aws_start.sh
+```
+
+The service runs under systemd, so closing the Session Manager browser tab does
+not stop the bot. A `tmux` session is useful for manual diagnostics, but is not
+needed to keep this service running. The event guide also limits storage to
+30 GB and restricts the account to the provided EC2 deployment; do not add
+other AWS services or launch another instance.
+
 Use `ROOSTOO_UNIVERSE_CONFIG=/opt/roostoo/config/universe-50.json` for the fixed
 50-pair execution universe. The default `config/live_candidate.json` now runs
 the causal regime-adaptive long-only mode: a 12-hour momentum input, 2% move
