@@ -24,7 +24,7 @@
   "rank_min_trend_strength": 0.5,
   "regime_min_move": 0.02,
   "regime_hold_bars": 0,
-  "take_profit_pct": 0.06,
-  "take_profit_trail": 0.025,
-  "take_profit_fraction": 0.5
+  "take_profit_pct": 0.01,
+  "take_profit_trail": 0.01,
+  "take_profit_fraction": 1.0
 }

@@ -215,8 +215,9 @@ sudoedit /etc/roostoo/roostoo.env
 The live candidate permits an immediate qualifying signal, refreshes targets
 every six hours, and uses a 4% rebalance band. It can use up to 95% exposure
 with 35% per-asset caps. It records average entry and high-water prices and
-trims half a position after a 6% gain followed by a 2.5% pullback. This is a
-profit-taking rule, not a promise to sell the exact top. Updating never clears
+closes the full position after it has reached a 1% gain and then pulled back 1%
+from its high-water price. This is a profit-protection rule, not a promise to
+sell the exact top. Updating never clears
 a drawdown halt or guarantees that a trade will occur. Plain `git pull` plus
 restart still blocks an active ledger whose config hash changed; use
 `aws_update.sh` for that case.
