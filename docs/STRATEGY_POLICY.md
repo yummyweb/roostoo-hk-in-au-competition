@@ -50,7 +50,9 @@ low-turnover pipeline:
 
 The headless runner briefly ran a short-window version of this regime logic
 (October 5-6). In an hourly replay it flipped regime several times a day and
-its fees exceeded its gross edge, so it is retired. The runner now trades the
-strength-gated trend ensemble above with a gradual drawdown brake. Any promotion
+its fees exceeded its gross edge, so it is retired. The runner now trades a
+four-slot breakout rotation with trailing stops, a deliberate high-variance
+choice for the return screen; the strength-gated trend ensemble with a gradual
+drawdown brake remains the supported lower-risk preset. Any promotion
 requires a frozen paper period, current Roostoo quotes, and reconciliation of
 the exact account and pair rules.

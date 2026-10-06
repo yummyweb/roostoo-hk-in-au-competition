@@ -50,14 +50,14 @@ other AWS services or launch another instance.
 
 Use `ROOSTOO_UNIVERSE_CONFIG=/opt/roostoo/config/universe-50.json` for the fixed
 50-pair execution universe. The default `config/live_candidate.json` now runs
-the long-only diversified trend ensemble: daily targets from 3/7/14/30-day
-trend votes, a 20% volatility target, 20% per-asset and 80% total caps, a 1%
-drift band, and a gradual 4% drawdown brake. It warms 721 Binance hourly
-candles per pair as a proxy and trades current Roostoo quotes, so verify the
-pair list and wallet before any live activation.
+the long-only breakout rotation: four equal slots, hourly entries on an 8%
+24-hour move at a 72-hour high, a 6% trailing stop on hourly closes, and a
+12-hour re-entry lock. It warms Binance hourly candles per pair as a proxy and
+trades current Roostoo quotes, so verify the pair list and wallet before any
+live activation.
 
-The ensemble holds cash for every pair with fewer than two positive trend
-votes, so it can be fully in cash in a broad decline.
+With no qualifying breakout the runner holds cash. Existing holdings of at
+least half a slot are kept under the trailing stop; smaller leftovers are sold.
 
 ## Diagnosing no orders
 
@@ -76,10 +76,9 @@ sudo systemctl show roostoo-bot -p ExecStart -p ActiveState -p SubState
   in the same mode, use `sudo bash /opt/roostoo/deploy/aws_update.sh` as described
   in the [README](../README.md#updating-the-running-bot). For a paper/live mode
   switch, follow the transition procedure below.
-- `"mode": "live"` with `"pending": null` can be an intentional wait. Targets
-  refresh at 00:00 UTC; between refreshes the runner trades only when a holding
-  drifts more than 1% of equity from its target or the brake changes exposure.
-  A `"brake"` below 1 in the status line means exposure is being reduced.
+- `"mode": "live"` with `"pending": null` can be an intentional wait. Slots are
+  decided once per hour; the runner trades only when a pair breaks out into a
+  free slot or a holding closes below its trailing stop.
 - `Cycle blocked:` or a startup traceback identifies an execution/data error.
   Missing credentials, a starting cash mismatch, stale candles/quotes, and
   unresolved orders prevent trading. The live starting wallet must be flat and

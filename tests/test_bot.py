@@ -87,7 +87,9 @@ class BotTests(unittest.TestCase):
         from roostoo.allocation import allocation_targets
         from roostoo.ranking import ranking_targets
         from roostoo.migrate_state import digest,supported,LEGACY_FIELDS
-        c=Config(**json.loads((Path(__file__).resolve().parents[1]/'config/live_candidate.json').read_text()))
+        root=Path(__file__).resolve().parents[1]
+        supported(Config(**json.loads((root/'config/live_candidate.json').read_text())))
+        c=Config(**json.loads((root/'config/ranking_candidate_strength50.json').read_text()))
         supported(c)
         f=dict(ready=True,volatility=.01,trend_strength=.75,dollar_volume=10.)
         features={'BTC/USD':f,'ETH/USD':dict(f,trend_strength=.25),'SOL/USD':dict(f,ready=False)}
@@ -117,4 +119,37 @@ class BotTests(unittest.TestCase):
             self.assertEqual(migrated['config_hash'],digest(new));self.assertEqual(migrated['inventory'],{'BTC/USD':.3})
             self.assertEqual((migrated['fills'],migrated['targets'],migrated['target_day'],migrated['pending']),(9,{},None,None))
             Runner(new,path,client)  # the runner accepts the migrated ledger
+
+    def test_breakout_slots_enter_hold_stop_and_lock(self):
+        from roostoo.allocation import breakout_targets
+        c=Config(strategy='allocation',rank_model='breakout',momentum=24,top_n=2,max_position=.5,max_exposure=.98,
+                 regime_min_move=.08,take_profit_trail=.06,take_profit_fraction=0.,cooldown_bars=12,rebalance_bars=1)
+        f=dict(ready=True,close=100.,momentum=.10,high_72=100.)
+        features={'A/USD':f,'B/USD':dict(f,momentum=.20),'C/USD':dict(f,momentum=.30,close=95.),'D/USD':dict(f,momentum=.05),'E/USD':dict(f,momentum=.5)}
+        # C is not at its 72h high, D moved too little, E is locked out: the two slots go to A and B.
+        self.assertEqual(breakout_targets(features,c,{},{},{'E/USD'}),{'B/USD':.49,'A/USD':.49})
+        held={'A/USD':.45,'B/USD':.45,'D/USD':.02}
+        # A closed 6% under its high and D is a leftover: both are released and E takes the free slot.
+        self.assertEqual(set(breakout_targets(features,c,held,{'A/USD':107.,'B/USD':105.,'D/USD':100.},set())),{'B/USD','E/USD'})
+        # A held slot is never rebalanced; a released one is sold in full.
+        rules={p:PairRule() for p in ('A/USD','B/USD')};quotes={p:{'bid':100.,'ask':100.1} for p in rules}
+        wallet={'USD':{'Free':10000},'A':{'Free':600},'B':{'Free':300}}
+        order,_=plan_order({},wallet,quotes,{'A/USD':.49,'B/USD':.49},rules,c,0);self.assertIsNone(order)
+        order,_=plan_order({},wallet,quotes,{'B/USD':.49},rules,c,0)
+        self.assertEqual((order['pair'],order['side'],order['quantity']),('A/USD','SELL',600))
+
+    def test_breakout_runner_tracks_untracked_holdings_and_locks_stops(self):
+        c=Config(strategy='allocation',rank_model='breakout',momentum=24,top_n=2,max_position=.5,max_exposure=.98,
+                 regime_min_move=.08,take_profit_trail=.06,take_profit_fraction=0.,cooldown_bars=12,rebalance_bars=1)
+        with tempfile.TemporaryDirectory() as folder:
+            r=Runner(c,Path(folder)/'state.json',Mock());r.rules={p:PairRule() for p in ('A/USD','B/USD')}
+            f=dict(ready=True,close=100.,momentum=0.,high_72=120.)
+            r.features={'A/USD':f,'B/USD':dict(f,close=90.)}
+            r.state['position_meta']={'B/USD':{'quantity':500,'avg_entry':95.,'high':100.}}
+            wallet={'USD':{'Free':10000},'A':{'Free':400},'B':{'Free':500}}
+            quotes={'A/USD':{'bid':100.,'ask':100.1},'B/USD':{'bid':90.,'ask':90.1}}
+            targets=r.breakout(wallet,quotes,1000)
+            self.assertEqual(set(targets),{'A/USD'});self.assertEqual(r.state['position_meta']['A/USD']['high'],100.)
+            self.assertEqual(r.state['profit_lock'],{'B/USD':1000+12*3600000})
+            r.update_position_meta('B/USD','SELL',499.999,90.);self.assertNotIn('B/USD',r.state['position_meta'])
 

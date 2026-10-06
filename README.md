@@ -146,7 +146,7 @@ Source PDFs contain team credentials. They are excluded from Git and app packagi
 
 ## AWS runner
 
-See [`docs/AWS_DEPLOYMENT.md`](docs/AWS_DEPLOYMENT.md) and [`deploy/aws_start.sh`](deploy/aws_start.sh). The script installs an Amazon Linux EC2 systemd service and defaults to paper mode. It reads credentials from `/etc/roostoo/roostoo.env`; real keys are never committed. Setting `ROOSTOO_LIVE=1` is an explicit account-owner action after reconciliation and prospective paper testing. The runner now uses the long-only diversified trend ensemble in `config/live_candidate.json`.
+See [`docs/AWS_DEPLOYMENT.md`](docs/AWS_DEPLOYMENT.md) and [`deploy/aws_start.sh`](deploy/aws_start.sh). The script installs an Amazon Linux EC2 systemd service and defaults to paper mode. It reads credentials from `/etc/roostoo/roostoo.env`; real keys are never committed. Setting `ROOSTOO_LIVE=1` is an explicit account-owner action after reconciliation and prospective paper testing. The runner now uses the long-only breakout rotation in `config/live_candidate.json`.
 
 The retirement rules and current architecture recommendation are in [`docs/STRATEGY_POLICY.md`](docs/STRATEGY_POLICY.md). The exact titles of the 34 supplied papers are indexed in [`docs/PAPER_TITLES.md`](docs/PAPER_TITLES.md).
 
@@ -193,7 +193,7 @@ The updater backs up the state beside the existing ledger and appends a
 `config_migration` event to its journal. It preserves fills, cash, inventory,
 equity peak, drawdown halt, and last submission time. Unsubmitted pending
 signals and cached targets are cleared so the new strategy recalculates them.
-It supports long-only allocation, regime-adaptive and trend-ensemble settings;
+It supports long-only allocation, breakout, regime-adaptive and trend-ensemble settings;
 it does not convert arbitrary strategy schemas. Mode switches, changes to
 `initial_cash`, unresolved submissions, locked balances, exchange pending
 orders, shorts, and held assets outside the new universe block migration.
@@ -212,29 +212,34 @@ sudoedit /etc/roostoo/roostoo.env
 # Keep ROOSTOO_STATE pointing to the existing live ledger.
 ```
 
-The live candidate is the strength-gated diversified trend ensemble from
-`config/ranking_candidate_strength50.json`. Once a day it holds every pair in the
-50-pair universe with at least two of four positive 3/7/14/30-day trend votes,
-sized by inverse volatility to a 20% annual volatility target, with 20%
-per-asset and 80% total caps and a 1% drift band. A pair leaves the book when
-its trend votes fall below two; there is no take-profit. The runner computes
-the same features and targets as the research replay (`ranking.trend_frame`,
-`ranking_targets`).
+The live candidate is a long-only breakout rotation, chosen on October 6 to
+pursue leaderboard return at the cost of much larger drawdowns. Every hour, from
+completed candles, a pair enters when its 24-hour return is at least 8% and it
+closes at a 72-hour high. There are four equal slots of about 25% of equity;
+the strongest 24-hour movers fill free slots. A slot is never trimmed or topped
+up. It is sold in full when an hourly close is 6% below the highest price since
+entry, and that pair is then locked out for 12 hours. With no qualifying
+breakout the account stays in cash. The portfolio halt is a 30% backstop.
+Replay and runner share `allocation.breakout_targets` and `Indicators`.
 
-Risk is cut by a gradual brake instead of a permanent halt: exposure scales
-linearly to zero as equity falls 4% below its highest value of the last 168
-hours, and returns as that peak ages out. A drawdown halt latched by an earlier
-config is not enforced while the brake is on. A pair quoted wider than 1% is
-skipped for that cycle instead of blocking the others, and a failed candle
-refresh keeps the previous targets so exits and the brake still run.
+`scripts/live_windows.py` replays the live config over independent 14-day
+episodes with the research engine: 34 episodes averaged +2.38% (median +1.52%,
+worst -14.70%, best +27.08%, 59% profitable, 21% above +10%, mean drawdown
+11%, worst 21%). Under doubled costs the mean is +0.05%, so the edge is
+cost-sensitive. The rule and its thresholds were chosen on this same history;
+treat the figures as a description of risk, not a forecast.
+
+The lower-risk alternative is the strength-gated trend ensemble
+(`config/ranking_candidate_strength50.json` plus `drawdown_brake: 0.04`), which
+the runner also supports: daily targets from 3/7/14/30-day trend votes, a 20%
+volatility target, and exposure that scales to zero as equity falls 4% below
+its 168-hour peak. The same replay gave +0.40% mean with a 3.57% worst
+drawdown. A pair quoted wider than 1% is skipped for that cycle instead of
+blocking the others, and a failed candle refresh keeps the previous targets.
 
 The earlier regime-adaptive preset (three assets, six-hour refresh, 1% trailing
 exit) was retired on October 6: in an hourly replay it flipped regime several
-times a day and paid more in fees than its signal earned. `scripts/live_windows.py` replays the
-current config over independent 14-day episodes: 34 episodes averaged +0.40%
-(median +0.18%, worst -2.53%, 59% profitable, worst drawdown 3.57%) and 0.00%
-under stress costs. That history was already inspected; it is a sanity check,
-not a forecast. Updating does not guarantee that a trade will occur. Plain `git pull` plus
+times a day and paid more in fees than its signal earned. Updating does not guarantee that a trade will occur. Plain `git pull` plus
 restart still blocks an active ledger whose config hash changed; use
 `aws_update.sh` for that case.
 

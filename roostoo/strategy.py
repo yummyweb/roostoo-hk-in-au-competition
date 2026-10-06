@@ -52,7 +52,7 @@ class Config:
     def validate(self):
         if self.strategy not in ('trend','hybrid','rotation','pullback','reversion','allocation','lstm_prediction','cross_asset','buy_hold','cash'):
             raise ValueError('Unknown strategy')
-        if self.rank_model not in ('momentum','ridge_72','boosted_24','boosted_72','trend_budget','regime_adaptive'):
+        if self.rank_model not in ('momentum','ridge_72','boosted_24','boosted_72','trend_budget','regime_adaptive','breakout'):
             raise ValueError('Unknown cross-asset ranking model')
         if type(self.rank_liquidity_top_n) is not int or not 1 <= self.rank_liquidity_top_n <= 500:
             raise ValueError('Invalid liquidity universe size')
@@ -119,7 +119,7 @@ class Indicators:
         return {'ready':self.count>=max(self.c.slow,self.c.momentum+1), 'fast':self.fast,'slow':self.slow,
                 'atr':atr,'efficiency':efficiency,'rsi':rsi,'momentum':momentum,
                 'zscore':(p[-1]-statistics.mean(recent))/sigma if sigma else 0,
-                'mean':statistics.mean(recent), 'close':bar.close,
+                'mean':statistics.mean(recent), 'close':bar.close, 'high_72':max(p[-72:]),
                 'volatility':statistics.pstdev([math.log(b/a) for a,b in zip(p[-73:],p[-72:])]) if len(p)>=73 else atr/bar.close}
 
 

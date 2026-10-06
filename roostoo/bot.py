@@ -15,7 +15,7 @@ import time
 from urllib.parse import urlencode
 from urllib.request import urlopen
 from .api import Client,APIError
-from .allocation import allocation_targets,brake_scale
+from .allocation import allocation_targets,brake_scale,breakout_targets
 from .data import Bar
 from .ranking import LOOKBACK,trend_frame
 from .rules import load_rules
@@ -48,6 +48,7 @@ def plan_order(state,wallet,quotes,targets,rules,c,now):
     for pair in sorted(rules):
         q=quantities[pair];price=quotes[pair]['bid'];held=q*price;desired=targets.get(pair,0)*scale*equity;delta=desired-held
         if not quotes[pair].get('tradable',True):continue
+        if c.rank_model=='breakout' and desired>0 and held>rules[pair].minimum:continue  # slots are not rebalanced
         threshold=max(rules[pair].minimum,equity*c.rebalance_band)
         if abs(delta)<=threshold and not(desired==0 and held>rules[pair].minimum):continue
         side='BUY' if delta>0 else 'SELL'
@@ -64,6 +65,7 @@ def plan_order(state,wallet,quotes,targets,rules,c,now):
                            'reason':'Drawdown halt: reduce exposure' if halted else
                                    ('Regime-adaptive rotation: rebalance confirmed trend leaders' if c.rank_model=='regime_adaptive'
                                     else 'Diversified trend ensemble: rebalance toward trend-vote targets' if c.rank_model=='trend_budget'
+                                    else ('Breakout slot: enter 72h high with strong 24h move' if side=='BUY' else 'Breakout slot: trailing stop or leftover exit') if c.rank_model=='breakout'
                                     else 'Daily volatility allocation: rebalance toward target'),
                            'target_weight':targets.get(pair,0)})
     # A trailing profit trim takes priority over a new allocation entry.
@@ -184,7 +186,8 @@ class Runner:
                 meta[pair]={'quantity':quantity,'avg_entry':price,'high':price}
         elif old:
             remaining=max(0,float(old.get('quantity',0))-quantity)
-            if remaining<=1e-10:meta.pop(pair,None)
+            # Rounding dust ends the position, so a later entry starts a fresh high-water mark.
+            if remaining<=max(1e-10,float(old.get('quantity',0))*.01):meta.pop(pair,None)
             else:old['quantity']=remaining
 
     def wallet(self):
@@ -255,6 +258,20 @@ class Runner:
                          market_return_48=basket_48)
         self.features=features;self.feature_hour=hour
 
+    def breakout(self,wallet,quotes,now):
+        """Hourly slot decision from completed candles; a stopped pair is locked out for the cooldown."""
+        value={p:float(wallet.get(p.split('/')[0],{}).get('Free',0))*quotes[p]['bid'] for p in self.rules}
+        equity=float(wallet.get('USD',{}).get('Free',0))+sum(value.values())
+        held={p:v/equity for p,v in value.items() if v>self.rules[p].minimum}
+        meta=self.state['position_meta']
+        for pair in held:  # an untracked holding starts its high-water mark now
+            meta.setdefault(pair,{'quantity':value[pair]/quotes[pair]['bid'],'avg_entry':quotes[pair]['bid'],'high':quotes[pair]['bid']})
+        locked={p for p,until in self.state['profit_lock'].items() if until>now}
+        targets=breakout_targets(self.features,self.c,held,{p:float(meta[p]['high']) for p in held},locked)
+        for pair in held:
+            if pair not in targets:self.state['profit_lock'][pair]=now+self.c.cooldown_bars*HOUR
+        return targets
+
     def submit(self,intent,quotes,now):
         if self.state.get('inflight'):raise RuntimeError('Ambiguous earlier order; submission blocked')
         if now-self.state['last_submit']<60000:raise RuntimeError('Global 60-second order throttle')
@@ -318,11 +335,16 @@ class Runner:
         if self.c.rank_model=='regime_adaptive':
             target_due = target_due or self.state.get('target_regime')!=self.state.get('market_regime')
             target_due = target_due or self.state.get('regime_age',0)==self.c.regime_hold_bars
+        wallet=self.wallet()
         if target_due and self.feature_hour==now//HOUR:
-            self.state['targets']=allocation_targets(self.features,self.c);self.state['target_day']=day
+            if self.c.rank_model=='breakout':
+                self.state['targets']=self.breakout(wallet,quotes,now)
+            else:
+                self.state['targets']=allocation_targets(self.features,self.c)
+            self.state['target_day']=day
             if self.c.rank_model=='regime_adaptive':
                 self.state['target_regime']=self.state.get('market_regime')
-        intent,marks=plan_order(self.state,self.wallet(),quotes,self.state['targets'],self.rules,self.c,now)
+        intent,marks=plan_order(self.state,wallet,quotes,self.state['targets'],self.rules,self.c,now)
         self.state.update(marks)
         if marks['halted']:self.state['targets']={}
         if self.c.drawdown_brake>0:

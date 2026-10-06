@@ -73,3 +73,15 @@ class AllocationTests(unittest.TestCase):
         self.assertFalse(braked['metrics']['circuit_breaker_triggered'])
         self.assertGreater(braked['metrics']['fills'],halted['metrics']['fills'])
 
+    def test_breakout_replay_fills_slots_without_rebalancing_them(self):
+        from roostoo.allocation import run_allocation
+        bars,m=synthetic(days=30)
+        c=Config(strategy='allocation',rank_model='breakout',fast=8,slow=24,momentum=24,top_n=2,max_position=.5,max_exposure=.98,
+                 regime_min_move=.02,take_profit_trail=.03,cooldown_bars=12,rebalance_bars=1,max_drawdown=.5)
+        r=run_allocation(bars,c,m,None)
+        filled=[o for o in r['orders'] if o['status']=='FILLED']
+        self.assertTrue(any(o['action']=='OPEN' for o in filled));self.assertTrue(any(o['action']=='CLOSE' for o in filled))
+        # Every sale closes the whole slot: no lot is ever split by a trim.
+        self.assertEqual(len(set((t['pair'],t['entry_time']) for t in r['trades'])),len(r['trades']))
+        self.assertAlmostEqual(c.initial_cash+sum(t['net_pnl'] for t in r['trades']),r['metrics']['final_equity'],places=6)
+
