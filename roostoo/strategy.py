@@ -41,6 +41,9 @@ class Config:
     rank_min_trend_strength: float = 0.0
     regime_min_move: float = .03
     regime_hold_bars: int = 168
+    take_profit_pct: float = .06
+    take_profit_trail: float = .025
+    take_profit_fraction: float = .50
 
     def validate(self):
         if self.strategy not in ('trend','hybrid','rotation','pullback','reversion','allocation','lstm_prediction','cross_asset','buy_hold','cash'):
@@ -55,6 +58,8 @@ class Config:
             raise ValueError('Invalid regime move hurdle')
         if type(self.regime_hold_bars) is not int or not 0 <= self.regime_hold_bars <= 720:
             raise ValueError('Invalid regime holding period')
+        if not 0 < self.take_profit_pct <= 1 or not 0 < self.take_profit_trail < 1 or not 0 < self.take_profit_fraction <= 1:
+            raise ValueError('Invalid trailing profit-taking configuration')
         if not 2 <= self.fast < self.slow <= 1000 or not 2 <= self.momentum <= 1000:
             raise ValueError('Require 2 <= fast < slow <= 1000 and a valid momentum window')
         if any(not math.isfinite(v) for v in asdict(self).values() if isinstance(v, (float,int))):

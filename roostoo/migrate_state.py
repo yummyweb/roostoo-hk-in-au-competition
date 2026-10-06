@@ -16,8 +16,15 @@ from .rules import load_rules
 from .strategy import Config
 
 
-def digest(config):
-    return hashlib.sha256(json.dumps(asdict(config), sort_keys=True).encode()).hexdigest()
+LEGACY_FIELDS = {'take_profit_pct', 'take_profit_trail', 'take_profit_fraction'}
+
+
+def digest(config, legacy=False):
+    values=asdict(config)
+    if legacy:
+        for field in LEGACY_FIELDS:
+            values.pop(field, None)
+    return hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()
 
 
 def supported(config):
@@ -56,7 +63,7 @@ def migrate(path, config, universe, live, client):
                 if event.get('event') not in ('start', 'config_migration') or 'config' not in event:
                     continue
                 candidate = Config(**event['config'])
-                if digest(candidate) == state['config_hash']:
+                if digest(candidate) == state['config_hash'] or digest(candidate, legacy=True) == state['config_hash']:
                     previous = candidate
         if previous is None:
             raise ValueError('Cannot verify previous config from ledger journal; migration blocked')

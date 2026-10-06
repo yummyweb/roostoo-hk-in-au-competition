@@ -39,11 +39,14 @@ def plan_order(state,wallet,quotes,targets,rules,c,now):
     halted=state.get('halted',False) or equity<=0 or 1-equity/peak>=c.max_drawdown
     if halted:targets={}
     orders=[]
+    profit_lock=state.get('profit_lock',{})
     for pair in sorted(rules):
         q=quantities[pair];price=quotes[pair]['bid'];held=q*price;desired=targets.get(pair,0)*equity;delta=desired-held
         threshold=max(rules[pair].minimum,equity*c.rebalance_band)
         if abs(delta)<=threshold and not(desired==0 and held>rules[pair].minimum):continue
         side='BUY' if delta>0 else 'SELL'
+        if side=='BUY' and float(profit_lock.get(pair,0))>now:
+            continue
         fill=quotes[pair]['ask'] if side=='BUY' else price
         # Leave a modest quote-movement buffer before live acceptance.
         budget=min(delta,cash/(1+c.fee_bps/10000)*.995,max(0,c.max_exposure*equity-(equity-cash)),max(0,c.max_position*equity-held)) if side=='BUY' else min(-delta,held)
@@ -56,6 +59,23 @@ def plan_order(state,wallet,quotes,targets,rules,c,now):
                                    ('Regime-adaptive rotation: rebalance confirmed trend leaders' if c.rank_model=='regime_adaptive'
                                     else 'Daily volatility allocation: rebalance toward target'),
                            'target_weight':targets.get(pair,0)})
+    # A trailing profit trim takes priority over a new allocation entry.
+    for pair in sorted(rules):
+        q=quantities[pair];meta=state.get('position_meta',{}).get(pair,{})
+        avg=float(meta.get('avg_entry',0));high=max(float(meta.get('high',0)),quotes[pair]['bid'])
+        if q<=0 or avg<=0 or high<=0:
+            continue
+        gain=quotes[pair]['bid']/avg-1
+        pullback=1-quotes[pair]['bid']/high
+        if gain < c.take_profit_pct or pullback < c.take_profit_trail:
+            continue
+        amount=rules[pair].quantity(q*c.take_profit_fraction)
+        if not rules[pair].valid(amount,quotes[pair]['bid']):
+            continue
+        return {'pair':pair,'side':'SELL','quantity':amount,'reference_price':quotes[pair]['bid'],
+                'signal_time':now,'priority':abs(amount*quotes[pair]['bid'])+equity,
+                'reason':f'Trailing profit take: gain {gain:.1%}, pullback {pullback:.1%}',
+                'target_weight':targets.get(pair,0)} , {'equity':equity,'cash':cash,'peak':peak,'halted':halted}
     chosen=sorted(orders,key=lambda o:(-o['priority'],o['pair']))[0] if orders else None
     return chosen,{'equity':equity,'cash':cash,'peak':peak,'halted':halted}
 
@@ -71,7 +91,9 @@ class Runner:
         requested_mode='live' if live else 'paper'
         self.state=json.loads(self.path.read_text()) if self.path.exists() else {
             'mode':'live' if live else 'paper','config_hash':digest,'cash':config.initial_cash,'inventory':{},'peak':config.initial_cash,
-            'halted':False,'last_submit':0,'inflight':None,'pending':None,'targets':{},'target_day':None,'fills':0}
+            'halted':False,'last_submit':0,'inflight':None,'pending':None,'targets':{},'target_day':None,
+            'fills':0,'position_meta':{},'profit_lock':{}}
+        self.state.setdefault('position_meta',{});self.state.setdefault('profit_lock',{})
         self.migrated_state=False
         if self.state['mode']!=requested_mode or self.state['config_hash']!=digest:
             # A config-only change can be adopted without discarding history
@@ -105,6 +127,8 @@ class Runner:
             raise ValueError(f'No pairs in universe config: {universe_path}')
         self.rules=load_rules(self.info,pairs)
         if self.live:
+            if not self.state.get('position_meta'):
+                self.state['position_meta']=self.reconstruct_position_meta()
             b=self.wallet()
             if abs(float(b.get('USD',{}).get('Free',0))-self.c.initial_cash)>.05 and (not self.path.exists() or self.migrated_state):
                 raise ValueError('A new live session needs a flat wallet matching initial_cash; do not silently adopt an unknown portfolio')
@@ -116,6 +140,44 @@ class Runner:
                 if 'no pending order' not in str(e).lower():raise
         self.log({'event':'start','mode':self.state['mode'],'config':asdict(self.c),'state_migrated':self.migrated_state,'source_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),'timestamp':int(time.time()*1000)})
         save_state(self.path,self.state)
+
+    def reconstruct_position_meta(self):
+        """Recover average entry and high water marks from matched spot orders."""
+        lots={}
+        for order in sorted(self.client.orders().get('OrderMatched',[]),key=lambda x:x.get('CreateTimestamp',0)):
+            pair=order.get('Pair','');asset=pair.split('/')[0]
+            if pair not in self.rules or order.get('Status')!='FILLED':
+                continue
+            quantity=float(order.get('FilledQuantity',0));price=float(order.get('FilledAverPrice',0))
+            if quantity<=0 or price<=0:continue
+            if order.get('Side')=='BUY':
+                lots.setdefault(asset,[]).append([quantity,price])
+            elif order.get('Side')=='SELL':
+                left=quantity
+                while left>1e-10 and lots.get(asset):
+                    take=min(left,lots[asset][0][0]);lots[asset][0][0]-=take;left-=take
+                    if lots[asset][0][0]<=1e-10:lots[asset].pop(0)
+        meta={}
+        for asset,entries in lots.items():
+            quantity=sum(x[0] for x in entries)
+            if quantity<=1e-10:continue
+            pair=asset+'/USD';avg=sum(q*p for q,p in entries)/quantity
+            meta[pair]={'quantity':quantity,'avg_entry':avg,'high':max(p for _,p in entries)}
+        return meta
+
+    def update_position_meta(self,pair,side,quantity,price):
+        meta=self.state.setdefault('position_meta',{});old=meta.get(pair)
+        if side=='BUY':
+            if old and old.get('quantity',0)>0:
+                oq=float(old['quantity']);nq=oq+quantity
+                old['avg_entry']=(oq*float(old['avg_entry'])+quantity*price)/nq
+                old['quantity']=nq;old['high']=max(float(old.get('high',price)),price)
+            else:
+                meta[pair]={'quantity':quantity,'avg_entry':price,'high':price}
+        elif old:
+            remaining=max(0,float(old.get('quantity',0))-quantity)
+            if remaining<=1e-10:meta.pop(pair,None)
+            else:old['quantity']=remaining
 
     def wallet(self):
         if not self.live:
@@ -199,10 +261,12 @@ class Runner:
             detail=response.get('OrderDetail',{})
             self.log({'event':'exchange_response','timestamp':now,'response':response})
             if detail.get('Status')!='FILLED':raise RuntimeError('Order not confirmed FILLED; reconciliation required')
+            fill_price=float(detail.get('FilledAverPrice',intent['reference_price']))
         else:
             price=quotes[intent['pair']]['ask' if intent['side']=='BUY' else 'bid']
             price*=1+self.c.slippage_bps/10000 if intent['side']=='BUY' else 1-self.c.slippage_bps/10000
             q=intent['quantity'];cost=q*price;fee=cost*self.c.fee_bps/10000
+            fill_price=price
             if intent['side']=='BUY':
                 if cost+fee>self.state['cash']:raise RuntimeError('Paper fill exceeded reserved cash')
                 self.state['cash']-=cost+fee
@@ -210,6 +274,9 @@ class Runner:
             else:
                 self.state['cash']+=cost-fee;self.state['inventory'][intent['pair']]-=q
             self.log({'event':'paper_fill','timestamp':now,**intent,'price':price,'fee':fee})
+        self.update_position_meta(intent['pair'],intent['side'],intent['quantity'],fill_price)
+        if intent['reason'].startswith('Trailing profit take'):
+            self.state['profit_lock'][intent['pair']]=now+self.c.rebalance_bars*HOUR
         self.state['fills']+=1;self.state['inflight']=None;save_state(self.path,self.state)
 
     def cycle(self):
@@ -225,6 +292,9 @@ class Runner:
             if not all(math.isfinite(x) and x>0 for x in (bid,ask)) or bid>ask:raise ValueError('Invalid quote')
             if (ask/bid-1)>.01:raise ValueError(f'Spread over 1%: {pair}; cycle blocked')
             quotes[pair]={'bid':bid,'ask':ask}
+        for pair,meta in list(self.state.get('position_meta',{}).items()):
+            if pair in quotes:
+                meta['high']=max(float(meta.get('high',quotes[pair]['bid'])),quotes[pair]['bid'])
         if self.state.get('pending') and now-self.state['pending']['signal_time']>=60000:
             self.submit(self.state['pending'],quotes,now)
         day=now//(self.c.rebalance_bars*HOUR)

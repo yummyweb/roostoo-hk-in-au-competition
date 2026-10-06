@@ -51,8 +51,9 @@ other AWS services or launch another instance.
 Use `ROOSTOO_UNIVERSE_CONFIG=/opt/roostoo/config/universe-50.json` for the fixed
 50-pair execution universe. The default `config/live_candidate.json` now runs
 the causal regime-adaptive long-only mode: a 12-hour momentum input, 2% move
-hurdle, immediate regime eligibility, top three candidates, and hourly target
-refreshes. It uses Binance hourly candles as a proxy and current Roostoo
+hurdle, immediate regime eligibility, top three candidates, and six-hour target
+refreshes. It can use up to 95% exposure with a 4% drift band and records
+cost-basis-aware trailing profit trims. It uses Binance hourly candles as a proxy and current Roostoo
 quotes, so verify the pair list and wallet before any live activation.
 
 The regime runner stays in cash during `BEAR` and `CHOP`. Its live classifier
