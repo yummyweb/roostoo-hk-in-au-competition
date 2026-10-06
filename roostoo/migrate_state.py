@@ -11,7 +11,7 @@ import time
 import uuid
 
 from .api import APIError, Client
-from .bot import Runner, save_state
+from .bot import save_state
 from .rules import load_rules
 from .strategy import Config
 
@@ -33,6 +33,13 @@ def supported(config):
         raise ValueError('Migration supports long-only allocation strategies only')
     if config.strategy == 'cross_asset' and config.rank_model != 'regime_adaptive':
         raise ValueError('Live cross-asset execution requires regime_adaptive')
+
+
+def append_event(path, event):
+    with path.with_suffix('.jsonl').open('a') as journal:
+        journal.write(json.dumps(event, allow_nan=False) + '\n')
+        journal.flush()
+        os.fsync(journal.fileno())
 
 
 def migrate(path, config, universe, live, client):
@@ -71,20 +78,27 @@ def migrate(path, config, universe, live, client):
         if previous.initial_cash != config.initial_cash:
             raise ValueError('initial_cash cannot change for an existing account')
 
-        runner = Runner(previous, path, client, live)
         pairs_doc = json.loads(universe.read_text())
         pairs = pairs_doc if isinstance(pairs_doc, list) else pairs_doc['pairs']
         if not pairs:
             raise ValueError('Execution universe is empty')
         client.sync_clock()
-        runner.rules = load_rules(client.exchange_info(), pairs)
-        wallet = runner.wallet()
+        rules = load_rules(client.exchange_info(), pairs)
+        if live:
+            balance = client.balance()
+            wallet = balance.get('SpotWallet', balance.get('Wallet'))
+            if not isinstance(wallet, dict):
+                raise ValueError('Unknown wallet response schema')
+        else:
+            wallet = {'USD': {'Free': state.get('cash', previous.initial_cash), 'Lock': 0}}
+            wallet.update({pair.split('/')[0]: {'Free': quantity, 'Lock': 0}
+                           for pair, quantity in state.get('inventory', {}).items()})
         for asset, balance in wallet.items():
             for field in ('Free', 'Lock'):
                 value = float(balance.get(field, 0))
                 if not math.isfinite(value) or value < 0:
                     raise ValueError('Invalid wallet balance')
-            if asset != 'USD' and float(balance.get('Free', 0)) > 0 and asset + '/USD' not in runner.rules:
+            if asset != 'USD' and float(balance.get('Free', 0)) > 0 and asset + '/USD' not in rules:
                 raise ValueError(f'Held asset {asset} is outside the new execution universe')
         if live:
             if client.short_positions().get('Positions'):
@@ -106,10 +120,10 @@ def migrate(path, config, universe, live, client):
         # Only unsubmitted decisions are invalidated for the new strategy.
         updated = dict(state, config_hash=digest(config), pending=None, targets={},
                        target_day=None, target_regime=None, market_regime=None, regime_age=0)
-        runner.log({'event': 'config_migration', 'timestamp': int(time.time()*1000),
-                    'mode': state['mode'], 'old_config_hash': state['config_hash'],
-                    'config_hash': digest(config), 'config': asdict(config),
-                    'backup': str(backup), 'discarded_pending': state.get('pending')})
+        append_event(path, {'event': 'config_migration', 'timestamp': int(time.time()*1000),
+                            'mode': state['mode'], 'old_config_hash': state['config_hash'],
+                            'config_hash': digest(config), 'config': asdict(config),
+                            'backup': str(backup), 'discarded_pending': state.get('pending')})
         save_state(path, updated)
         print(f'Config migrated. Trading history and risk state preserved. Backup: {backup}')
 
