@@ -71,6 +71,24 @@ class RankingTests(unittest.TestCase):
         self.assertEqual(ranking_targets({'BTC/USD':dict(f,momentum_168=.01)},c,3600000),{})
 
 
+    def test_regime_filter_tracks_volatility_states_causally(self):
+        from roostoo.regime_hmm import RegimeFilter,WINDOW
+        identity=[[1.,0.],[0.,1.]]
+        params=dict(feature_mean=[0.,.01],feature_std=[.01,.01],means=[[0.,-1.],[0.,1.]],covariances=[identity,identity],
+                    transition=[[.95,.05],[.05,.95]],start=[.5,.5],calm_state=0)
+        quiet=[100.*(1+.0005*(-1)**i) for i in range(60)];wild=[quiet[-1]*(1+.03*(-1)**i) for i in range(60)]
+        f=RegimeFilter(params);seen=[f.update(x) for x in quiet]
+        self.assertTrue(all(x is None for x in seen[:WINDOW]));self.assertIsNotNone(seen[WINDOW])
+        self.assertTrue(f.calm);before=list(f.alpha)
+        g=RegimeFilter(params)
+        for x in quiet+wild:g.update(x)
+        self.assertFalse(g.calm);self.assertAlmostEqual(sum(g.alpha),1.)
+        # Later prices cannot change an earlier estimate.
+        h=RegimeFilter(params)
+        for x in quiet:h.update(x)
+        self.assertEqual(h.alpha,before)
+
+
 @unittest.skipUnless(HAS_ML,'Install ML requirements for ranking tests')
 class RankingCausalityTests(unittest.TestCase):
     def test_future_mutations_leave_prior_features_fit_and_orders_unchanged(self):

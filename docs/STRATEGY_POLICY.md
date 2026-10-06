@@ -19,6 +19,18 @@ Retired from active exploration:
   under stress; the exchange cannot guarantee simultaneous legs.
 - Broad always-on trend and passive baselines: useful benchmarks, but not an
   active edge and not a reason to increase the universe.
+- K-Means plus Hidden Markov regime filter (Haryani, Chandra and Tarigan,
+  2026): on hourly Bitcoin returns and 24-hour volatility it finds three
+  persistent volatility states, about 13 changes per 14 days against about 62
+  for the breadth classifier. The calm state did not reliably predict market
+  direction out of sample: the sign changed between sub-periods and sampling
+  offsets, and gating breakout entries on it helped one half of the test
+  period and hurt the other. `scripts/fit_regime_hmm.py` reproduces the fit and
+  the validation; `roostoo/regime_hmm.py` applies it. It is not used for orders.
+- Mean reversion gated on the breadth classifier's CHOP label: buying pairs two
+  or more standard deviations below their own rolling mean lost on average in
+  every tested window, stop and filter variant; shorting the mirror image lost
+  more.
 - Donchian breakout variants: low turnover and sometimes positive under stress,
   but they still lost in broad chronological blocks. A breakout exception in
   BEAR/CHOP was especially poor and remains retired.
