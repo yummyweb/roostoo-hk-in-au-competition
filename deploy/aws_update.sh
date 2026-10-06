@@ -13,7 +13,8 @@ trap 'echo "Update failed. Inspect the error and service status; preserve the ex
 cd "$APP_DIR"
 systemctl stop roostoo-bot.service
 if [[ "${1:-}" != "--apply" ]]; then
-  git pull --ff-only origin main
+  BRANCH="$(git symbolic-ref --short HEAD)"
+  git pull --ff-only origin "$BRANCH"
   # Execute the freshly pulled updater, not the old shell script.
   exec bash "$APP_DIR/deploy/aws_update.sh" --apply
 fi
