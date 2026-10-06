@@ -146,7 +146,7 @@ Source PDFs contain team credentials. They are excluded from Git and app packagi
 
 ## AWS runner
 
-See [`docs/AWS_DEPLOYMENT.md`](docs/AWS_DEPLOYMENT.md) and [`deploy/aws_start.sh`](deploy/aws_start.sh). The script installs an Amazon Linux EC2 systemd service and defaults to paper mode. It reads credentials from `/etc/roostoo/roostoo.env`; real keys are never committed. Setting `ROOSTOO_LIVE=1` is an explicit account-owner action after reconciliation and prospective paper testing. The runner now uses the causal regime-adaptive long-only configuration from `config/live_candidate.json`.
+See [`docs/AWS_DEPLOYMENT.md`](docs/AWS_DEPLOYMENT.md) and [`deploy/aws_start.sh`](deploy/aws_start.sh). The script installs an Amazon Linux EC2 systemd service and defaults to paper mode. It reads credentials from `/etc/roostoo/roostoo.env`; real keys are never committed. Setting `ROOSTOO_LIVE=1` is an explicit account-owner action after reconciliation and prospective paper testing. The runner now uses the long-only diversified trend ensemble in `config/live_candidate.json`.
 
 The retirement rules and current architecture recommendation are in [`docs/STRATEGY_POLICY.md`](docs/STRATEGY_POLICY.md). The exact titles of the 34 supplied papers are indexed in [`docs/PAPER_TITLES.md`](docs/PAPER_TITLES.md).
 
@@ -193,7 +193,7 @@ The updater backs up the state beside the existing ledger and appends a
 `config_migration` event to its journal. It preserves fills, cash, inventory,
 equity peak, drawdown halt, and last submission time. Unsubmitted pending
 signals and cached targets are cleared so the new strategy recalculates them.
-It supports long-only allocation and regime-adaptive cross-asset settings;
+It supports long-only allocation, regime-adaptive and trend-ensemble settings;
 it does not convert arbitrary strategy schemas. Mode switches, changes to
 `initial_cash`, unresolved submissions, locked balances, exchange pending
 orders, shorts, and held assets outside the new universe block migration.
@@ -212,13 +212,29 @@ sudoedit /etc/roostoo/roostoo.env
 # Keep ROOSTOO_STATE pointing to the existing live ledger.
 ```
 
-The live candidate permits an immediate qualifying signal, refreshes targets
-every six hours, and uses a 4% rebalance band. It can use up to 95% exposure
-with 35% per-asset caps. It records average entry and high-water prices and
-closes the full position after it has reached a 1% gain and then pulled back 1%
-from its high-water price. This is a profit-protection rule, not a promise to
-sell the exact top. Updating never clears
-a drawdown halt or guarantees that a trade will occur. Plain `git pull` plus
+The live candidate is the strength-gated diversified trend ensemble from
+`config/ranking_candidate_strength50.json`. Once a day it holds every pair in the
+50-pair universe with at least two of four positive 3/7/14/30-day trend votes,
+sized by inverse volatility to a 20% annual volatility target, with 20%
+per-asset and 80% total caps and a 1% drift band. A pair leaves the book when
+its trend votes fall below two; there is no take-profit. The runner computes
+the same features and targets as the research replay (`ranking.trend_frame`,
+`ranking_targets`).
+
+Risk is cut by a gradual brake instead of a permanent halt: exposure scales
+linearly to zero as equity falls 4% below its highest value of the last 168
+hours, and returns as that peak ages out. A drawdown halt latched by an earlier
+config is not enforced while the brake is on. A pair quoted wider than 1% is
+skipped for that cycle instead of blocking the others, and a failed candle
+refresh keeps the previous targets so exits and the brake still run.
+
+The earlier regime-adaptive preset (three assets, six-hour refresh, 1% trailing
+exit) was retired on October 6: in an hourly replay it flipped regime several
+times a day and paid more in fees than its signal earned. `scripts/live_windows.py` replays the
+current config over independent 14-day episodes: 34 episodes averaged +0.40%
+(median +0.18%, worst -2.53%, 59% profitable, worst drawdown 3.57%) and 0.00%
+under stress costs. That history was already inspected; it is a sanity check,
+not a forecast. Updating does not guarantee that a trade will occur. Plain `git pull` plus
 restart still blocks an active ledger whose config hash changed; use
 `aws_update.sh` for that case.
 

@@ -15,8 +15,9 @@ import time
 from urllib.parse import urlencode
 from urllib.request import urlopen
 from .api import Client,APIError
-from .allocation import allocation_targets
+from .allocation import allocation_targets,brake_scale
 from .data import Bar
+from .ranking import LOOKBACK,trend_frame
 from .rules import load_rules
 from .strategy import Config,Indicators
 
@@ -36,12 +37,17 @@ def plan_order(state,wallet,quotes,targets,rules,c,now):
     quantities={p:float(wallet.get(p.split('/')[0],{}).get('Free',0)) for p in rules}
     equity=cash+sum(quantities[p]*quotes[p]['bid'] for p in rules)
     peak=max(state.get('peak',equity),equity)
-    halted=state.get('halted',False) or equity<=0 or 1-equity/peak>=c.max_drawdown
+    if c.drawdown_brake>0:
+        # Gradual and non-latching: exposure recovers as the rolling peak ages out.
+        scale=brake_scale(equity,max([equity]+[m[1] for m in state.get('equity_marks',[])]),c);halted=equity<=0
+    else:
+        scale=1.;halted=state.get('halted',False) or equity<=0 or 1-equity/peak>=c.max_drawdown
     if halted:targets={}
     orders=[]
     profit_lock=state.get('profit_lock',{})
     for pair in sorted(rules):
-        q=quantities[pair];price=quotes[pair]['bid'];held=q*price;desired=targets.get(pair,0)*equity;delta=desired-held
+        q=quantities[pair];price=quotes[pair]['bid'];held=q*price;desired=targets.get(pair,0)*scale*equity;delta=desired-held
+        if not quotes[pair].get('tradable',True):continue
         threshold=max(rules[pair].minimum,equity*c.rebalance_band)
         if abs(delta)<=threshold and not(desired==0 and held>rules[pair].minimum):continue
         side='BUY' if delta>0 else 'SELL'
@@ -57,11 +63,13 @@ def plan_order(state,wallet,quotes,targets,rules,c,now):
                            'priority':abs(delta)+(equity if side=='SELL' else 0),
                            'reason':'Drawdown halt: reduce exposure' if halted else
                                    ('Regime-adaptive rotation: rebalance confirmed trend leaders' if c.rank_model=='regime_adaptive'
+                                    else 'Diversified trend ensemble: rebalance toward trend-vote targets' if c.rank_model=='trend_budget'
                                     else 'Daily volatility allocation: rebalance toward target'),
                            'target_weight':targets.get(pair,0)})
     # A trailing profit trim takes priority over a new allocation entry.
-    for pair in sorted(rules):
+    for pair in sorted(rules) if c.take_profit_fraction>0 else ():
         q=quantities[pair];meta=state.get('position_meta',{}).get(pair,{})
+        if not quotes[pair].get('tradable',True):continue
         avg=float(meta.get('avg_entry',0));high=max(float(meta.get('high',0)),quotes[pair]['bid'])
         if q<=0 or avg<=0 or high<=0:
             continue
@@ -75,9 +83,9 @@ def plan_order(state,wallet,quotes,targets,rules,c,now):
         return {'pair':pair,'side':'SELL','quantity':amount,'reference_price':quotes[pair]['bid'],
                 'signal_time':now,'priority':abs(amount*quotes[pair]['bid'])+equity,
                 'reason':f'Trailing profit take: gain {gain:.1%}, pullback {pullback:.1%}',
-                'target_weight':targets.get(pair,0)} , {'equity':equity,'cash':cash,'peak':peak,'halted':halted}
+                'target_weight':targets.get(pair,0)} , {'equity':equity,'cash':cash,'peak':peak,'halted':halted,'brake':scale}
     chosen=sorted(orders,key=lambda o:(-o['priority'],o['pair']))[0] if orders else None
-    return chosen,{'equity':equity,'cash':cash,'peak':peak,'halted':halted}
+    return chosen,{'equity':equity,'cash':cash,'peak':peak,'halted':halted,'brake':scale}
 
 
 class Runner:
@@ -193,8 +201,8 @@ class Runner:
     def refresh_features(self,now):
         hour=now//HOUR
         if self.feature_hour==hour:return
-        features={}
-        count=max(self.c.slow*3,self.c.momentum+2)
+        features={};trend=self.c.rank_model=='trend_budget'
+        count=max(self.c.slow*3,self.c.momentum+2,LOOKBACK+1 if trend else 0)
         for pair in self.rules:
             rows=[];end=hour*HOUR-1
             while len(rows)<count:
@@ -210,6 +218,9 @@ class Runner:
                 features[pair]=indicator.update(bar); closes.append(bar.close)
                 dollar_volumes.append(bar.close*bar.volume); previous=bar.timestamp
             if previous!=(hour-1)*HOUR:raise ValueError(f'Stale history: {pair}')
+            if trend:
+                # Same trend votes, volatility and liquidity as the research replay.
+                features[pair]=trend_frame(closes,dollar_volumes);continue
             f=features[pair]
             def trailing_return(window):
                 return closes[-1]/closes[-window-1]-1 if len(closes)>window else 0.
@@ -281,7 +292,11 @@ class Runner:
 
     def cycle(self):
         self.client.sync_clock();now=int(time.time()*1000+self.client.offset)
-        self.refresh_features(now)
+        try:self.refresh_features(now)
+        except Exception as e:
+            # Without candles, keep the last targets so exits and the brake still run.
+            if self.state.get('target_day') is None:raise
+            self.log({'event':'feature_error','timestamp':now,'error':str(e)})
         # Obtain execution quotes AFTER potentially slow historical reads.
         ticker=self.client.ticker();now=int(time.time()*1000+self.client.offset)
         server=int(ticker.get('ServerTime',0))
@@ -290,8 +305,9 @@ class Runner:
         for pair in self.rules:
             raw=ticker['Data'][pair];bid=float(raw['MaxBid']);ask=float(raw['MinAsk'])
             if not all(math.isfinite(x) and x>0 for x in (bid,ask)) or bid>ask:raise ValueError('Invalid quote')
-            if (ask/bid-1)>.01:raise ValueError(f'Spread over 1%: {pair}; cycle blocked')
             quotes[pair]={'bid':bid,'ask':ask}
+            # A wide quote pauses trading in that pair only; it is still marked at the bid.
+            if (ask/bid-1)>.01:quotes[pair]['tradable']=False
         for pair,meta in list(self.state.get('position_meta',{}).items()):
             if pair in quotes:
                 meta['high']=max(float(meta.get('high',quotes[pair]['bid'])),quotes[pair]['bid'])
@@ -302,20 +318,25 @@ class Runner:
         if self.c.rank_model=='regime_adaptive':
             target_due = target_due or self.state.get('target_regime')!=self.state.get('market_regime')
             target_due = target_due or self.state.get('regime_age',0)==self.c.regime_hold_bars
-        if target_due:
+        if target_due and self.feature_hour==now//HOUR:
             self.state['targets']=allocation_targets(self.features,self.c);self.state['target_day']=day
             if self.c.rank_model=='regime_adaptive':
                 self.state['target_regime']=self.state.get('market_regime')
         intent,marks=plan_order(self.state,self.wallet(),quotes,self.state['targets'],self.rules,self.c,now)
         self.state.update(marks)
         if marks['halted']:self.state['targets']={}
+        if self.c.drawdown_brake>0:
+            hour=now//HOUR;history=[m for m in self.state.get('equity_marks',[]) if m[0]>hour-self.c.brake_window_bars]
+            if history and history[-1][0]==hour:history[-1][1]=max(history[-1][1],marks['equity'])
+            else:history.append([hour,marks['equity']])
+            self.state['equity_marks']=history
         self.state['pending']=intent
         self.log({'event':'snapshot','timestamp':now,**marks,'market_regime':self.state.get('market_regime'),
                   'regime_age':self.state.get('regime_age',0),'targets':self.state['targets'],
                   'pending':intent,'quotes':quotes})
         save_state(self.path,self.state)
         return {'mode':self.state['mode'],'equity':marks['equity'],'fills':self.state['fills'],
-                'halted':marks['halted'],'market_regime':self.state.get('market_regime'),
+                'halted':marks['halted'],'brake':marks['brake'],'market_regime':self.state.get('market_regime'),
                 'regime_age':self.state.get('regime_age',0),
                 'pending':intent['pair'] if intent else None}
 

@@ -131,6 +131,20 @@ def execution_features(market, scores):
     return frames
 
 
+def trend_frame(closes, dollar_volumes):
+    """Latest execution_features row for one asset, without NumPy, for the live runner."""
+    last = len(closes)-1
+    logs = [math.log(x) for x in closes]
+    changes = [0.]+[b-a for a, b in zip(logs, logs[1:])]
+    window = changes[-168:]; mean = sum(window)/len(window)
+    sigma = math.sqrt(max(0, sum(x*x for x in window)/len(window)-mean*mean))
+    returns = {h: logs[-1]-logs[max(0, last-h)] for h in (72, 168, 336, 720)}
+    recent = closes[-168:]; volumes = dollar_volumes[-168:]
+    return dict(ready=last >= LOOKBACK, close=closes[-1], slow=sum(recent)/len(recent), volatility=sigma,
+                momentum=returns[72], dollar_volume=sum(volumes)/len(volumes),
+                trend_strength=sum(r > 0 for r in returns.values())/4)
+
+
 def ranking_targets(features, c, interval):
     if c.rank_model == 'regime_adaptive':
         ready = [f for f in features.values() if f.get('ready')]

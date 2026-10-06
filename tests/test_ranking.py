@@ -1,4 +1,5 @@
 import importlib.util
+import math
 from dataclasses import replace
 import unittest
 from roostoo.data import synthetic
@@ -114,3 +115,14 @@ class RankingCausalityTests(unittest.TestCase):
         # Ensure this is a meaningful check and the mutation actually changes
         # the post-cutoff classifier input.
         self.assertFalse(np.array_equal(a['close'][cutoff:],b['close'][cutoff:]))
+
+    def test_live_trend_frame_matches_replay_features(self):
+        from roostoo.ranking import market_features,fit_scores,execution_features,trend_frame
+        bars,_=synthetic(days=110)
+        market=market_features(bars);scores,_,_=fit_scores(market,'trend_budget',int(len(market['timestamps'])*.6))
+        expected=execution_features(market,scores)[-1]
+        for j,pair in enumerate(market['pairs']):
+            live=trend_frame([float(x) for x in market['close'][:,j]],[float(x) for x in market['dollar_volume'][:,j]])
+            self.assertTrue(live['ready'])
+            for key,value in live.items():self.assertTrue(math.isclose(value,expected[pair][key],rel_tol=1e-9,abs_tol=1e-12),key)
+

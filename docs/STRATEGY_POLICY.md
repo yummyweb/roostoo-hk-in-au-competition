@@ -48,8 +48,9 @@ low-turnover pipeline:
    architecture used a 3–5% hurdle; the short-window live paper preset uses a
    2% hurdle and must be evaluated separately.
 
-The headless runner now implements this regime-adaptive logic on its configured
-50-pair Roostoo execution universe. It remains exploratory: the broad
-222-asset classifier study is not used to place live orders. Any promotion
+The headless runner briefly ran a short-window version of this regime logic
+(October 5-6). In an hourly replay it flipped regime several times a day and
+its fees exceeded its gross edge, so it is retired. The runner now trades the
+strength-gated trend ensemble above with a gradual drawdown brake. Any promotion
 requires a frozen paper period, current Roostoo quotes, and reconciliation of
 the exact account and pair rules.

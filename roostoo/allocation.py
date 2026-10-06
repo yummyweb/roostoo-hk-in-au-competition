@@ -26,7 +26,7 @@ def run_allocation(bars,c,manifest,rules,start_index=0,precomputed=None):
     if c.allow_short:raise ValueError('Allocation strategy currently supports long-only portfolios')
     states={p:Indicators(c) for p in pairs}
     positions={p:[] for p in pairs};trades=[];orders=[];signals=[];cash=c.initial_cash
-    pending=None;targets={};halted=False;peak=c.initial_cash;last_fill=-10**20
+    pending=None;targets={};halted=False;peak=c.initial_cash;last_fill=-10**20;marks=[]
     half=c.spread_bps/20000;slip=c.slippage_bps/10000;fee_rate=c.fee_bps/10000
     start=frames[start_index][0]
     curve=[dict(timestamp=start,equity=cash,cash=cash,drawdown=0.,exposure=0.,benchmark=cash)]
@@ -79,7 +79,9 @@ def run_allocation(bars,c,manifest,rules,start_index=0,precomputed=None):
         if index<start_index:continue
         gross=sum(qty(p)*market[p].close for p in pairs)
         equity=cash+gross*(1-half);peak=max(peak,equity);dd=1-equity/peak
-        if dd>=c.max_drawdown or cash<-.000001:halted=True
+        # With the brake on, exposure follows the rolling peak instead of halting for good.
+        marks=(marks+[equity])[-c.brake_window_bars:];scale=brake_scale(equity,max(marks),c)
+        if (c.drawdown_brake<=0 and dd>=c.max_drawdown) or cash<-.000001:halted=True
         for pair,lots in positions.items():
             for p in lots:
                 mark=market[pair].close*(1-half);gain=p['quantity']*(mark-p['entry_price'])
@@ -95,7 +97,7 @@ def run_allocation(bars,c,manifest,rules,start_index=0,precomputed=None):
         if pending:continue
         candidates=[]
         for pair in pairs:
-            held=qty(pair)*market[pair].close;desired=targets.get(pair,0)*equity
+            held=qty(pair)*market[pair].close;desired=targets.get(pair,0)*scale*equity
             delta=desired-held
             threshold=max(rules[pair].minimum,equity*c.rebalance_band)
             if abs(delta)>threshold or (desired==0 and held>rules[pair].minimum):
@@ -123,8 +125,17 @@ def run_allocation(bars,c,manifest,rules,start_index=0,precomputed=None):
                         'Annualized ratios on 14-day episodes are unstable; activity counts do not prove organizer eligibility.']}
 
 
+def brake_scale(equity,peak,c):
+    """Exposure multiplier shared by replay and the runner; 1 when the brake is off."""
+    if c.drawdown_brake<=0 or peak<=0:return 1.
+    return min(1.,max(0.,1-(1-equity/peak)/c.drawdown_brake))
+
+
 def allocation_targets(features,c,interval=3600000):
     """Shared causal allocation rule used by replay and the autonomous runner."""
+    if c.strategy=='cross_asset' and c.rank_model=='trend_budget':
+        from .ranking import ranking_targets
+        return ranking_targets(features,c,interval)
     if c.rank_model == 'regime_adaptive':
         return regime_adaptive_targets(features, c, interval)
     ranked=[]

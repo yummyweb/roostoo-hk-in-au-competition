@@ -50,15 +50,14 @@ other AWS services or launch another instance.
 
 Use `ROOSTOO_UNIVERSE_CONFIG=/opt/roostoo/config/universe-50.json` for the fixed
 50-pair execution universe. The default `config/live_candidate.json` now runs
-the causal regime-adaptive long-only mode: a 12-hour momentum input, 2% move
-hurdle, immediate regime eligibility, top three candidates, and six-hour target
-refreshes. It can use up to 95% exposure with a 4% drift band and records
-cost-basis-aware trailing profit trims. It uses Binance hourly candles as a proxy and current Roostoo
-quotes, so verify the pair list and wallet before any live activation.
+the long-only diversified trend ensemble: daily targets from 3/7/14/30-day
+trend votes, a 20% volatility target, 20% per-asset and 80% total caps, a 1%
+drift band, and a gradual 4% drawdown brake. It warms 721 Binance hourly
+candles per pair as a proxy and trades current Roostoo quotes, so verify the
+pair list and wallet before any live activation.
 
-The regime runner stays in cash during `BEAR` and `CHOP`. Its live classifier
-uses the configured 50-pair universe; the separate 222-asset classifier was
-research-only discovery data.
+The ensemble holds cash for every pair with fewer than two positive trend
+votes, so it can be fully in cash in a broad decline.
 
 ## Diagnosing no orders
 
@@ -77,10 +76,10 @@ sudo systemctl show roostoo-bot -p ExecStart -p ActiveState -p SubState
   in the same mode, use `sudo bash /opt/roostoo/deploy/aws_update.sh` as described
   in the [README](../README.md#updating-the-running-bot). For a paper/live mode
   switch, follow the transition procedure below.
-- `"mode": "live"` with `"pending": null` can be an intentional wait. `BEAR`
-  and `CHOP` hold cash; `BULL` and `RECOVERY` still require qualifying assets.
-  The current live candidate has no regime-age hold, so it can target assets on
-  the first completed hourly evaluation.
+- `"mode": "live"` with `"pending": null` can be an intentional wait. Targets
+  refresh at 00:00 UTC; between refreshes the runner trades only when a holding
+  drifts more than 1% of equity from its target or the brake changes exposure.
+  A `"brake"` below 1 in the status line means exposure is being reduced.
 - `Cycle blocked:` or a startup traceback identifies an execution/data error.
   Missing credentials, a starting cash mismatch, stale candles/quotes, and
   unresolved orders prevent trading. The live starting wallet must be flat and

@@ -44,6 +44,10 @@ class Config:
     take_profit_pct: float = .06
     take_profit_trail: float = .025
     take_profit_fraction: float = .50
+    # Gradual, non-latching de-risking: exposure scales linearly to zero as
+    # equity falls this far below its rolling peak. 0 keeps the latching halt.
+    drawdown_brake: float = 0.0
+    brake_window_bars: int = 168
 
     def validate(self):
         if self.strategy not in ('trend','hybrid','rotation','pullback','reversion','allocation','lstm_prediction','cross_asset','buy_hold','cash'):
@@ -58,8 +62,10 @@ class Config:
             raise ValueError('Invalid regime move hurdle')
         if type(self.regime_hold_bars) is not int or not 0 <= self.regime_hold_bars <= 720:
             raise ValueError('Invalid regime holding period')
-        if not 0 < self.take_profit_pct <= 1 or not 0 < self.take_profit_trail < 1 or not 0 < self.take_profit_fraction <= 1:
+        if not 0 < self.take_profit_pct <= 1 or not 0 < self.take_profit_trail < 1 or not 0 <= self.take_profit_fraction <= 1:
             raise ValueError('Invalid trailing profit-taking configuration')
+        if not 0 <= self.drawdown_brake < 1 or type(self.brake_window_bars) is not int or not 1 <= self.brake_window_bars <= 1000:
+            raise ValueError('Invalid drawdown brake configuration')
         if not 2 <= self.fast < self.slow <= 1000 or not 2 <= self.momentum <= 1000:
             raise ValueError('Require 2 <= fast < slow <= 1000 and a valid momentum window')
         if any(not math.isfinite(v) for v in asdict(self).values() if isinstance(v, (float,int))):
@@ -87,7 +93,7 @@ class Config:
 class Indicators:
     def __init__(self, config):
         self.c = config
-        self.closes = deque(maxlen=max(config.slow,config.momentum)+2)
+        self.closes = deque(maxlen=max(config.slow,config.momentum,72)+2)
         self.ranges = deque(maxlen=14)
         self.fast = self.slow = None
         self.count = 0

@@ -55,3 +55,21 @@ class AllocationTests(unittest.TestCase):
         self.assertEqual(set(targets),{'BTC/USD','ETH/USD'})
         self.assertEqual(regime_adaptive_targets({'BTC/USD':dict(f,market_regime='CHOP')},c),{})
         self.assertEqual(regime_adaptive_targets({'BTC/USD':dict(f,momentum_72=.01)},c),{})
+
+    def test_volatility_uses_returns_when_slow_window_is_short(self):
+        import math,statistics
+        bars,_=synthetic(days=10);btc=[b for b in bars if b.pair==bars[0].pair]
+        state=Indicators(Config(fast=16,slow=64,momentum=12))
+        for b in btc[:100]:f=state.update(b)
+        closes=[b.close for b in btc[:100]]
+        self.assertAlmostEqual(f['volatility'],statistics.pstdev([math.log(b/a) for a,b in zip(closes[-73:],closes[-72:])]))
+
+    def test_replay_brake_reduces_exposure_instead_of_halting(self):
+        from roostoo.allocation import run_allocation
+        bars,m=synthetic(days=30)
+        c=Config(strategy='allocation',fast=8,slow=24,momentum=12,max_position=.4,max_drawdown=.005,rebalance_bars=6)
+        halted=run_allocation(bars,c,m,None);braked=run_allocation(bars,replace(c,drawdown_brake=.005),m,None)
+        self.assertTrue(halted['metrics']['circuit_breaker_triggered'])
+        self.assertFalse(braked['metrics']['circuit_breaker_triggered'])
+        self.assertGreater(braked['metrics']['fills'],halted['metrics']['fills'])
+

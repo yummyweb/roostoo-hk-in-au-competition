@@ -16,13 +16,15 @@ from .rules import load_rules
 from .strategy import Config
 
 
-LEGACY_FIELDS = {'take_profit_pct', 'take_profit_trail', 'take_profit_fraction'}
+# Config fields added after earlier ledgers were hashed, newest group first.
+LEGACY_FIELDS = [{'drawdown_brake', 'brake_window_bars'},
+                 {'take_profit_pct', 'take_profit_trail', 'take_profit_fraction'}]
 
 
-def digest(config, legacy=False):
+def digest(config, legacy=0):
     values=asdict(config)
-    if legacy:
-        for field in LEGACY_FIELDS:
+    for group in LEGACY_FIELDS[:legacy]:
+        for field in group:
             values.pop(field, None)
     return hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()
 
@@ -31,8 +33,8 @@ def supported(config):
     config.validate()
     if config.allow_short or config.strategy not in ('allocation', 'cross_asset'):
         raise ValueError('Migration supports long-only allocation strategies only')
-    if config.strategy == 'cross_asset' and config.rank_model != 'regime_adaptive':
-        raise ValueError('Live cross-asset execution requires regime_adaptive')
+    if config.strategy == 'cross_asset' and config.rank_model not in ('regime_adaptive', 'trend_budget'):
+        raise ValueError('Live cross-asset execution requires regime_adaptive or trend_budget')
 
 
 def append_event(path, event):
@@ -70,7 +72,7 @@ def migrate(path, config, universe, live, client):
                 if event.get('event') not in ('start', 'config_migration') or 'config' not in event:
                     continue
                 candidate = Config(**event['config'])
-                if digest(candidate) == state['config_hash'] or digest(candidate, legacy=True) == state['config_hash']:
+                if any(digest(candidate, n) == state['config_hash'] for n in range(len(LEGACY_FIELDS)+1)):
                     previous = candidate
         if previous is None:
             raise ValueError('Cannot verify previous config from ledger journal; migration blocked')
