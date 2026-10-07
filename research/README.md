@@ -1,6 +1,6 @@
 # Strategy research, 7 October 2026
 
-This folder holds the study behind the live preset in `config/live_candidate.json`: the test harness, every
+This folder holds the study behind the bot's presets (`config/live_candidate.json`, `config/breakout_candidate.json`): the test harness, every
 candidate strategy's code, the written reports, and the scripts that reproduce the tables below.
 
 ## The question
@@ -34,10 +34,10 @@ Total return over each period (default costs; 4 equal slots unless stated). The 
 
 | Strategy | Design (282 d, market -45%) | Selection (104 d, -11%) | Holdout (104 d, +60%) | 12 majors 2024-25 (197 d, +49%) |
 |---|---:|---:|---:|---:|
-| **Breakout: +8% in 12 h at a 120 h high, 4 x ATR trail (live)** | **+173%** | **+26%** | **+102%** | **+72%** |
+| **Breakout: +8% in 12 h at a 120 h high, 4 x ATR trail (`config/breakout_candidate.json`)** | **+173%** | **+26%** | **+102%** | **+72%** |
 | Same with a 10% entry (the design-period plateau centre) | +183% | +34% | +84% | +46% |
 | Same with a 10% entry and a fixed 6% trail | +78% | +17% | +24% | +31% |
-| Previous live rule: +8% in 24 h at a 72 h high, 6% trail | +40% | +21% | -8% | +34% |
+| First breakout settings: +8% in 24 h at a 72 h high, 6% trail | +40% | +21% | -8% | +34% |
 | Previous rule behind a BTC > 480 h EMA gate | +107% | +6% | -19% | +34% |
 | EMA 48/200 long+short, 6 x ATR trail, 1% risk per trade | +95% | -10% | -1% | -5% |
 | EMA 24/200 long only, 4 x ATR trail | +66% | +3% | -3% | -3% |
@@ -48,9 +48,9 @@ Total return over each period (default costs; 4 equal slots unless stated). The 
 | EMA and z-score side by side, no regime switch | +85% | -22% | +6% | not run |
 | Breakout 67% + EMA long/short 67% in separate sleeves | +175% | -5% | +37% | not run |
 
-Under stress costs the live rule returned +126%, +15%, +86% and +65% in the four periods.
+Under stress costs the tuned breakout rule returned +126%, +15%, +86% and +65% in the four periods.
 
-The live rule on fresh-start 11-day windows (a new account every 3 days, as in the competition):
+The tuned breakout rule on fresh-start 11-day windows (a new account every 3 days, as in the competition):
 
 | Period | Mean | Median | Windows above zero | Worst | Windows at +10% or more |
 |---|---:|---:|---:|---:|---:|
@@ -87,7 +87,28 @@ runner. About five trades out of a few hundred supply the profit in every period
 - **Breakout**: the only family positive in all four periods. Its parameters sit on a plateau: move 8-12% over
   6-12 h, high window 72-240 h, trail 3-4.5 x ATR(24 h) on the hourly close, 3-6 slots, lockout immaterial.
 
-## The live rule and why these numbers
+## The team strategy as run live (8 October)
+
+After this study the team chose to run its own design: a per-coin BULL/BEAR/CHOP label (the paper's K-Means plus HMM
+on the 24-hour return and 24-hour volatility) picking between the EMA 48/200 crossover (long in BULL, short in BEAR)
+and 168-hour z-score mean reversion (both ways in CHOP), with the risk rules found above. The two regime windows were
+chosen on the design period among nine pairs (`lab/work/team_final/REPORT.txt`). `lab/work/live_legs/` runs the
+repository's own decision function (`roostoo/legs.py`) in the harness; an independent implementation of the same
+specification (`lab/work/team_final/`) gives identical trades.
+
+| Period | Total | Max drawdown | Stress costs | Fresh 11-day mean / median | Days with a trade |
+|---|---:|---:|---:|---:|---:|
+| Design | +17.7% | 16.6% | +7.0% | +1.2% / +0.9% | 84% |
+| Selection | +3.5% | 19.3% | -1.6% | -0.2% / -0.1% | 91% |
+| Holdout | -13.5% | 15.7% | -18.2% | -0.2% / -0.7% | 93% |
+| 12 majors | -19.2% | 19.7% | -20.8% | -1.3% / -1.3% | 66% |
+
+P&L by leg over the four periods: EMA longs -$4k / +$4k / +$8k / -$11k, EMA shorts +$29k / -$2k / -$18k / +$2k,
+mean-reversion longs -$3k / -$1k / +$3k / -$3k, mean-reversion shorts -$4k / -$2k / -$8k / -$7k.
+Reproduce with `ROOSTOO_REPO=$PWD .venv-lstm/bin/python research/lab/work/live_legs/periods.py` (run from
+`research/lab`).
+
+## The breakout rule and why its numbers
 
 | Parameter | Value | Reason | Range that behaves the same |
 |---|---|---|---|

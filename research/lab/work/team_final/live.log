@@ -1,0 +1,10 @@
+BEAR: state 2, mean 24h log return -0.0039, mean 24h hourly vol 0.0089, share of coin-hours (filtered, in-sample) 44.1%, P(stay) 0.9756
+CHOP: state 0, mean 24h log return -0.0026, mean 24h hourly vol 0.0046, share of coin-hours (filtered, in-sample) 39.8%, P(stay) 0.9835
+BULL: state 1, mean 24h log return +0.0111, mean 24h hourly vol 0.0171, share of coin-hours (filtered, in-sample) 16.1%, P(stay) 0.9738
+log likelihood -964781.0362049553 iterations 46 converged True
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-antarikshverma-Dev-reteach/f9aa7736-aeff-4487-8f9b-d5963905c03d/scratchpad/lab/work/team_final/live_check.py", line 38, in <module>
+    import harness as h, regime, live_fit
+ModuleNotFoundError: No module named 'harness'
+BTC/USD: last 500 hours, pure-Python filter vs lab labels: agreement 100.0% with the full history, 100.0% from the last 1,200 closes only | lab labels BULL 0 BEAR 41 CHOP 459
+BONK/USD: last 500 hours, pure-Python filter vs lab labels: agreement 100.0% with the full history, 100.0% from the last 1,200 closes only | lab labels BULL 184 BEAR 300 CHOP 16

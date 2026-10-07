@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replay the live config over independent 14-day episodes with the research engine.
+"""Replay a long-only config (breakout or the trend ensemble) over independent 14-day episodes with the research engine.
 
 Each episode starts flat with $100k. The 50-asset history has already been
 inspected, so this is a reproducible sanity check of what is deployed, not a
@@ -19,7 +19,8 @@ from roostoo.strategy import Config,Indicators
 
 
 def main():
-    c=Config(**json.loads(Path(sys.argv[1] if len(sys.argv)>1 else 'config/live_candidate.json').read_text()))
+    c=Config(**json.loads(Path(sys.argv[1] if len(sys.argv)>1 else 'config/breakout_candidate.json').read_text()))
+    if c.rank_model=='regime_legs':raise SystemExit('regime_legs is replayed by research/lab/work/live_legs/periods.py, not by this engine')
     bars,manifest=read_csv('data/binance-50-1h.csv');rules=get_rules(bars);pairs=len(rules);horizon=14*24
     if c.strategy=='cross_asset':
         market=market_features(bars);n=len(market['timestamps'])

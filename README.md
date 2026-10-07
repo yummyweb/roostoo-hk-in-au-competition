@@ -146,7 +146,7 @@ Source PDFs contain team credentials. They are excluded from Git and app packagi
 
 ## AWS runner
 
-See [`docs/AWS_DEPLOYMENT.md`](docs/AWS_DEPLOYMENT.md) and [`deploy/aws_start.sh`](deploy/aws_start.sh). The script installs an Amazon Linux EC2 systemd service and defaults to paper mode. It reads credentials from `/etc/roostoo/roostoo.env`; real keys are never committed. Setting `ROOSTOO_LIVE=1` is an explicit account-owner action after reconciliation and prospective paper testing. The runner now uses the long-only breakout rotation in `config/live_candidate.json`.
+See [`docs/AWS_DEPLOYMENT.md`](docs/AWS_DEPLOYMENT.md) and [`deploy/aws_start.sh`](deploy/aws_start.sh). The script installs an Amazon Linux EC2 systemd service and defaults to paper mode. It reads credentials from `/etc/roostoo/roostoo.env`; real keys are never committed. Setting `ROOSTOO_LIVE=1` is an explicit account-owner action after reconciliation and prospective paper testing. The runner now uses the team's regime strategy (long and short) in `config/live_candidate.json`.
 
 The retirement rules and current architecture recommendation are in [`docs/STRATEGY_POLICY.md`](docs/STRATEGY_POLICY.md). The exact titles of the 34 supplied papers are indexed in [`docs/PAPER_TITLES.md`](docs/PAPER_TITLES.md).
 
@@ -194,12 +194,19 @@ The updater backs up the state beside the existing ledger and appends a
 `config_migration` event to its journal. It preserves fills, cash, inventory,
 equity peak, drawdown halt, and last submission time. Unsubmitted pending
 signals and cached targets are cleared so the new strategy recalculates them.
-Saved trailing-stop levels are cleared as well; the high-water marks are kept,
-so each stop is rebuilt at the first hourly decision.
-It supports long-only allocation, breakout, regime-adaptive and trend-ensemble settings;
+For the breakout preset, saved trailing-stop levels are cleared and the
+high-water marks kept, so each stop is rebuilt at the first hourly decision.
+A switch to the regime strategy from another one starts with an empty position
+book: every holding the old strategy left is sold and any short covered, one
+order per minute, before new entries on those coins. A parameter change within
+the regime strategy keeps its positions, trailing levels and re-entry locks and
+clears only the order queue.
+It supports long-only allocation, breakout, regime-adaptive and trend-ensemble settings, and the long/short regime-legs strategy;
 it does not convert arbitrary strategy schemas. Mode switches, changes to
-`initial_cash`, unresolved submissions, locked balances, exchange pending
-orders, shorts, and held assets outside the new universe block migration.
+`initial_cash`, unresolved submissions, exchange pending orders and held assets
+outside the new universe block migration. Open shorts block a migration to any
+preset other than `regime_legs`; a migration to `regime_legs` accepts them and
+the runner covers the ones it did not open.
 A failed migration leaves the service stopped and the ledger unchanged.
 The previous config must be verifiable from the existing `.jsonl` journal.
 
@@ -215,46 +222,54 @@ sudoedit /etc/roostoo/roostoo.env
 # Keep ROOSTOO_STATE pointing to the existing live ledger.
 ```
 
-The live candidate is a long-only breakout rotation. Every hour, from completed
-candles, a pair enters when it is up at least 8% over the last 12 hours and its
-close is within 0.1% of its highest close of the last 120 hours. There are four
-equal slots of about 25% of equity; the strongest 12-hour movers fill free
-slots. A slot is never trimmed or topped up. Each slot carries a trailing stop
-4 x ATR(24h) under the highest price since entry; the stop only moves up, and
-the slot is sold in full at the first hourly close at or below it. That pair is
-then locked out for 12 hours. With no qualifying breakout the account stays in
-cash. The portfolio halt is a 30% backstop. Replay and runner share
-`allocation.breakout_targets` and `Indicators`.
+The live candidate is the team's regime strategy (`rank_model: regime_legs`):
+a regime label per coin decides which rule trades it, long or short. Every
+hour, from completed candles:
 
-These settings come from the study in [`research/`](research/README.md), run on
-October 7 after the team proposed a K-Means regime filter switching between an
-EMA crossover and z-score mean reversion. About 8,500 variants were tuned on the
-first 60% of the 50-pair history, frozen candidates were chosen on the next 20%,
-and the last 20% plus an older 12-coin set were held back. The breakout family
-was the only one positive in all four periods (+173%, +26%, +102%, +72% for the
-live settings; +126%, +15%, +86%, +65% under stress costs). The EMA crossover,
-the z-score rule, the regime switch, shorting in bad markets and a Bitcoin trend
-gate each lost in at least one held-back period and are not traded. The earlier
-breakout settings (8% in 24 hours at a 72-hour high, 6% trail) returned +40%,
-+21%, -8% and +34%.
+- **Regime.** Each coin is labelled BULL, BEAR or CHOP by a three-state hidden
+  Markov model started from K-Means clusters (Haryani, Chandra and Tarigan,
+  2026) on two features, its 24-hour return and the 24-hour volatility of its
+  hourly returns. One model serves all 50 coins (`config/coin_regime.json`,
+  fitted by `scripts/fit_coin_regime.py`); the runner applies it with a
+  forward filter, so a label uses only past candles.
+- **BULL and BEAR: EMA crossover.** Buy a BULL coin within 12 hours of its
+  48-hour EMA crossing above its 200-hour EMA; short a BEAR coin within 12
+  hours of the cross below. At most four positions, the widest gap first, each
+  sized so that its stop loses 1% of equity (capped at a quarter of equity).
+  Exit when the EMAs cross back, or at an hourly close through a trailing stop
+  6 x ATR(24h) from the best price since entry, which only tightens.
+- **CHOP: z-score mean reversion.** Buy a CHOP coin whose close is 3 standard
+  deviations below its 168-hour mean and short one 3 above; 5% of equity each,
+  at most ten. Exit at the first hourly close back across the mean, after 48
+  hours, or 20% against the entry; the coin then waits 12 hours.
 
-It is a high-variance rule: over fresh-start 11-day windows the median is about
-zero, between a sixth and a third of windows gain 10% or more, and the worst
-window in each period lost 8-23%. About five trades out of a few hundred supply
-the profit. `scripts/live_windows.py` replays the live config in the
-repository's own engine over independent 14-day episodes: 34 episodes averaged
-+8.95% (median +1.97%, worst -10.82%, best +140.54%, 53% profitable, mean
-drawdown 12%, worst 19%, a trade on a median of 11 of 14 days and at least 4);
-+7.39% mean under doubled costs. That engine fills one order per hour, so it
-is accurate to a few points per episode; the live runner sends each hour's
-orders minutes apart.
+Orders are market orders, one per minute. Shorts are 1x through the exchange's
+short endpoints; an interrupted short request is settled from the exchange's
+position list, and if the account is not allowed to short the long side keeps
+trading. `roostoo/legs.py` holds the one decision function: the runner calls
+it, and the research harness calls the same function through
+`research/lab/work/live_legs/`.
+
+Every window except the two regime features came from the October 7 study
+([`research/`](research/README.md)); the regime windows were chosen on the
+design period among nine pairs. Run through that harness the strategy returned
++17.7% on the design period, +3.5% on the selection period, -13.5% on the
+holdout and -19.2% on the older 12-coin set (+7.0%, -1.6%, -18.2%, -20.8%
+under stress costs), trading on 84-93% of days. It roughly breaks even while
+prices fall and loses in a broad rally. The study's breakout rule returned
++173%, +26%, +102% and +72% over the same periods; the team chose the regime
+strategy, and the breakout preset stays in `config/breakout_candidate.json`
+(point `ROOSTOO_CONFIG` at it to switch back). `scripts/test_short_canary.py`
+opens and closes one 10 USD short on a general test account to show how the
+exchange reports short positions; run it before relying on the short side.
 
 The lower-risk alternative is the strength-gated trend ensemble
 (`config/ranking_candidate_strength50.json` plus `drawdown_brake: 0.04`), which
 the runner also supports: daily targets from 3/7/14/30-day trend votes, a 20%
 volatility target, and exposure that scales to zero as equity falls 4% below
-its 168-hour peak. The same replay gave +0.40% mean with a 3.57% worst
-drawdown. A pair quoted wider than 1% is skipped for that cycle instead of
+its 168-hour peak. Replayed by `scripts/live_windows.py` (34 independent
+14-day episodes in the repository's own engine) it gave +0.40% mean with a
+3.57% worst drawdown. A pair quoted wider than 1% is skipped for that cycle instead of
 blocking the others, and a failed candle refresh keeps the previous targets.
 
 The earlier regime-adaptive preset (three assets, six-hour refresh, 1% trailing

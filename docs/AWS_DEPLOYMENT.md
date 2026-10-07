@@ -50,14 +50,14 @@ other AWS services or launch another instance.
 
 Use `ROOSTOO_UNIVERSE_CONFIG=/opt/roostoo/config/universe-50.json` for the fixed
 50-pair execution universe. The default `config/live_candidate.json` now runs
-the long-only breakout rotation: four equal slots, hourly entries on an 8%
-12-hour move at a 120-hour high, a 4 x ATR(24h) trailing stop on hourly closes,
-and a 12-hour re-entry lock. It warms Binance hourly candles per pair as a proxy and
-trades current Roostoo quotes, so verify the pair list and wallet before any
-live activation.
+the team's regime strategy: each coin is labelled BULL, BEAR or CHOP every hour;
+BULL and BEAR coins trade the EMA 48/200 crossover (long and short), CHOP coins
+trade 168-hour z-score mean reversion both ways. It warms 1,000 Binance hourly
+candles per pair as a proxy and trades current Roostoo quotes, so verify the
+pair list and wallet before any live activation.
 
-With no qualifying breakout the runner holds cash. Existing holdings of at
-least half a slot are kept under the trailing stop; smaller leftovers are sold.
+Holdings and shorts the strategy did not open itself are closed on the first
+cycles after a switch. The breakout preset is `config/breakout_candidate.json`.
 
 ## Diagnosing no orders
 
@@ -76,15 +76,21 @@ sudo systemctl show roostoo-bot -p ExecStart -p ActiveState -p SubState
   in the same mode, use `sudo bash /opt/roostoo/deploy/aws_update.sh` as described
   in the [README](../README.md#updating-the-running-bot). For a paper/live mode
   switch, follow the transition procedure below.
-- `"mode": "live"` with `"pending": null` can be an intentional wait. Slots are
-  decided once per hour; the runner trades only when a pair breaks out into a
-  free slot or a holding closes at or below its trailing stop.
+- The status line shows `"regimes"` (how many coins carry each label),
+  `"positions"` (open positions by leg and side), `"queued"` (orders waiting for
+  their minute) and `"done"` (the order sent this cycle). Decisions are made
+  once per hour; `"done": null` between them is normal.
 - `Cycle blocked:` or a startup traceback identifies an execution/data error.
-  Missing credentials, a starting cash mismatch, stale candles/quotes, and
-  unresolved orders prevent trading. The live starting wallet must be flat and
+  Missing credentials, a starting cash mismatch, stale quotes and an unresolved
+  spot order prevent trading. With the regime strategy, `No candles for this
+  hour` means the candle download failed: queued orders still go out, but no
+  new decision is made and no exit rule is checked until it succeeds (it is
+  retried every minute). The live starting wallet must be flat and
   match the configured `initial_cash` (default USD 100,000).
-- A non-null `pending` is queued for a later cycle, at least 60 seconds after
-  the signal. Check the following cycle for a fill or error.
+- `"queued"` above zero means orders are waiting: one is sent per cycle, at
+  least 60 seconds after the previous order. Check the following cycles for
+  `"done"` or an error. The breakout and ensemble presets print `"pending"`
+  instead.
 
 Rerunning `aws_start.sh` now restarts the service so updated code, environment,
 and unit arguments take effect. Previously, `systemctl enable --now` left an
@@ -134,6 +140,10 @@ sudo systemctl stop roostoo-bot   # emergency stop; does not cancel exchange ord
 ```
 
 The runner persists an intent before each POST and blocks on an unresolved
-submission, stale quotes, locked balances, unmanaged assets, or an existing
-process. A systemd restart does not bypass those checks. Stop the service and
-reconcile the exchange manually after a timeout or ambiguous response.
+spot submission, stale quotes, locked coin balances, unmanaged assets, or an
+existing process. A systemd restart does not bypass those checks. Stop the
+service and reconcile the exchange manually after a timeout or ambiguous
+response to a spot order. With the regime strategy, locked USD is short
+collateral and does not block, a short open or close left without an answer is
+settled from `/v6/short_positions` on the next cycle, and a failed read of that
+list blocks the cycle instead of being read as "no shorts".

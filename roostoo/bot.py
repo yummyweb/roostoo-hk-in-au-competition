@@ -4,7 +4,7 @@ Live activation is explicit; it is not enabled by opening the desktop app.
 No POST is retried. Ambiguous outcomes latch a reconciliation halt across restarts.
 """
 import argparse
-from dataclasses import asdict
+from dataclasses import asdict,replace
 import fcntl
 import hashlib
 import json
@@ -17,11 +17,15 @@ from urllib.request import urlopen
 from .api import Client,APIError
 from .allocation import allocation_targets,brake_scale,breakout_targets
 from .data import Bar
+from .legs import decide
 from .ranking import LOOKBACK,trend_frame
+from .regime_hmm import RegimeFilter
 from .rules import load_rules
 from .strategy import Config,Indicators
 
 HOUR=3600000
+COIN_REGIME=Path(__file__).resolve().parents[1]/'config/coin_regime.json'
+SHORT_KINDS=('SHORT','COVER');CLOSING=('SELL','COVER')   # an interrupted short request is reconciled from the exchange's position list
 
 
 def save_state(path,state):
@@ -94,8 +98,9 @@ def plan_order(state,wallet,quotes,targets,rules,c,now):
 class Runner:
     def __init__(self,config,path,client=None,live=False):
         config.validate()
-        if config.strategy not in ('allocation','cross_asset') or config.allow_short:
-            raise ValueError('The autonomous runner currently supports long-only allocation and regime-adaptive cross-asset modes only')
+        self.legs=config.rank_model=='regime_legs'
+        if config.strategy not in ('allocation','cross_asset') or (config.allow_short and not self.legs) or (self.legs and config.strategy!='allocation'):
+            raise ValueError('The autonomous runner supports long-only allocation modes, and shorts only in the regime-legs mode')
         self.c=config;self.path=Path(path);self.path.parent.mkdir(parents=True,exist_ok=True)
         self.client=client or Client();self.live=live
         digest=hashlib.sha256(json.dumps(asdict(config),sort_keys=True).encode()).hexdigest()
@@ -105,6 +110,7 @@ class Runner:
             'halted':False,'last_submit':0,'inflight':None,'pending':None,'targets':{},'target_day':None,
             'fills':0,'position_meta':{},'profit_lock':{}}
         self.state.setdefault('position_meta',{});self.state.setdefault('profit_lock',{})
+        for key,empty in (('book',{}),('locks',{}),('queue',[]),('shorts',{})):self.state.setdefault(key,empty)
         self.migrated_state=False
         if self.state['mode']!=requested_mode or self.state['config_hash']!=digest:
             # A config-only change can be adopted without discarding history
@@ -119,9 +125,11 @@ class Runner:
             self.state.update(mode=requested_mode,config_hash=digest,targets={},target_day=None,
                               target_regime=None,market_regime=None,regime_age=0)
             self.migrated_state=True
-        if self.state.get('inflight'):
+        if self.state.get('inflight') and self.state['inflight'].get('kind') not in SHORT_KINDS:
             raise RuntimeError('Unresolved submitted order. Reconcile the saved intent with query_order and balances before restarting.')
-        self.rules=None;self.features=None;self.feature_hour=None;self.info=None
+        self.rules=None;self.features=None;self.feature_hour=None;self.info=None;self.labels={}
+        self.regime=json.loads(COIN_REGIME.read_text()) if self.legs else None
+        self.no_shorts=False   # set when the exchange says this account cannot short; the short side is then skipped
 
     def log(self,event):
         with self.path.with_suffix('.jsonl').open('a') as f:
@@ -143,7 +151,7 @@ class Runner:
             b=self.wallet()
             if abs(float(b.get('USD',{}).get('Free',0))-self.c.initial_cash)>.05 and (not self.path.exists() or self.migrated_state):
                 raise ValueError('A new live session needs a flat wallet matching initial_cash; do not silently adopt an unknown portfolio')
-            if self.client.short_positions().get('Positions'):raise ValueError('Existing short positions are outside the allocation strategy')
+            if not self.legs and self.client.short_positions().get('Positions'):raise ValueError('Existing short positions are outside the allocation strategy')
             try:
                 pending=self.client.request('GET','/v3/pending_count',signed=True)
                 if pending.get('TotalPending',0):raise ValueError('Existing pending exchange orders require reconciliation')
@@ -199,14 +207,15 @@ class Runner:
         expected={'USD'}|{p.split('/')[0] for p in self.rules}
         if any(float(v.get('Free',0))>0 and asset not in expected for asset,v in wallet.items()):
             raise ValueError('Unmanaged assets present in the live wallet')
-        if any(float(v.get('Lock',0))>0 for v in wallet.values()):raise ValueError('Locked balances require order reconciliation')
+        # Short collateral may be reported as locked USD; a locked coin can only be an order this bot never places.
+        if any(float(v.get('Lock',0))>0 and not (asset=='USD' and self.legs) for asset,v in wallet.items()):raise ValueError('Locked balances require order reconciliation')
         return wallet
 
     def refresh_features(self,now):
         hour=now//HOUR
         if self.feature_hour==hour:return
-        features={};trend=self.c.rank_model=='trend_budget'
-        count=max(self.c.slow*3,self.c.momentum+2,self.c.breakout_high_bars+2,LOOKBACK+1 if trend else 0)
+        features={};labels={};trend=self.c.rank_model=='trend_budget'
+        count=max(self.c.slow*3,self.c.momentum+2,self.c.breakout_high_bars+2,LOOKBACK+1 if trend else 0,1000 if self.legs else 0)
         for pair in self.rules:
             rows=[];end=hour*HOUR-1
             while len(rows)<count:
@@ -222,6 +231,10 @@ class Runner:
                 features[pair]=indicator.update(bar); closes.append(bar.close)
                 dollar_volumes.append(bar.close*bar.volume); previous=bar.timestamp
             if previous!=(hour-1)*HOUR:raise ValueError(f'Stale history: {pair}')
+            if self.legs:
+                regime=RegimeFilter(self.regime)
+                for close in closes:regime.update(close)
+                labels[pair]=regime.label;continue
             if trend:
                 # Same trend votes, volatility and liquidity as the research replay.
                 features[pair]=trend_frame(closes,dollar_volumes);continue
@@ -257,7 +270,7 @@ class Runner:
                          market_breadth_short=breadth_short,market_breadth_48=breadth_48,
                          market_breadth_168=breadth_168,market_return_short=basket_short,
                          market_return_48=basket_48)
-        self.features=features;self.feature_hour=hour
+        self.features=features;self.labels=labels;self.feature_hour=hour
 
     def breakout(self,wallet,quotes,now):
         """Hourly slot decision from completed candles; a stopped pair is locked out for the cooldown."""
@@ -310,14 +323,7 @@ class Runner:
             self.state['profit_lock'][intent['pair']]=now+self.c.rebalance_bars*HOUR
         self.state['fills']+=1;self.state['inflight']=None;save_state(self.path,self.state)
 
-    def cycle(self):
-        self.client.sync_clock();now=int(time.time()*1000+self.client.offset)
-        try:self.refresh_features(now)
-        except Exception as e:
-            # Without candles, keep the last targets so exits and the brake still run.
-            if self.state.get('target_day') is None:raise
-            self.log({'event':'feature_error','timestamp':now,'error':str(e)})
-        # Obtain execution quotes AFTER potentially slow historical reads.
+    def read_quotes(self):
         ticker=self.client.ticker();now=int(time.time()*1000+self.client.offset)
         server=int(ticker.get('ServerTime',0))
         if abs(now-server)>15000:raise ValueError('Stale ticker: execution blocked')
@@ -328,6 +334,185 @@ class Runner:
             quotes[pair]={'bid':bid,'ask':ask}
             # A wide quote pauses trading in that pair only; it is still marked at the bid.
             if (ask/bid-1)>.01:quotes[pair]['tradable']=False
+        return quotes,now
+
+    # ---- regime-legs mode: tagged long and short positions, decided hourly by legs.decide -------------------------
+    def account(self,quotes):
+        """Cash, long quantities, short positions and equity as the exchange (or the paper ledger) reports them."""
+        wallet=self.wallet();cash=float(wallet.get('USD',{}).get('Free',0))
+        longs={p:float(wallet.get(p.split('/')[0],{}).get('Free',0)) for p in self.rules}
+        if self.live:
+            shorts={}
+            try:rows=self.client.short_positions().get('Positions')
+            except APIError as error:
+                # Only an explicit refusal with no short on the book means "this account cannot short". Any other
+                # failed read blocks this cycle: counting open shorts as gone would drop their collateral from equity.
+                refused=any(word in str(error).lower() for word in ('not allow','permission'))
+                if not refused or any(p['side']<0 for p in self.state['book'].values()):raise
+                if not self.no_shorts:self.log({'event':'shorts_unavailable','error':str(error)})
+                self.no_shorts=True;rows=[]
+            if rows is None and not any(p['side']<0 for p in self.state['book'].values()):rows=[]
+            if not isinstance(rows,list):raise ValueError('Unknown short position response schema')
+            rows=[row for row in rows if row.get('Pair') in self.rules]   # a short outside the universe is not this bot's
+            for row in rows:   # a zero field is left out by the exchange
+                collateral=float(row.get('Collateral',0))
+                shorts[row['Pair']]={'qty':float(row.get('ShortQty',0)),'entry':float(row.get('EntryPrice',0)),'collateral':collateral,
+                                     'value':float(row.get('PositionValue',collateral+float(row.get('UnrealizedPNL',0))))}
+        else:
+            shorts={p:dict(s,value=max(0.,s['collateral']+s['qty']*(s['entry']-quotes[p]['ask']))) for p,s in self.state['shorts'].items()}
+        equity=cash+sum(q*quotes[p]['bid'] for p,q in longs.items())+sum(s['value'] for s in shorts.values())
+        return {'cash':cash,'longs':longs,'shorts':shorts,'equity':equity}
+
+    def spot(self,pair,side,quantity,quotes,reason,now):
+        """One market spot order under the same no-retry rule as submit(). Returns the fill price."""
+        reference=quotes[pair]['ask' if side=='BUY' else 'bid']
+        intent={'pair':pair,'side':side,'quantity':quantity,'reference_price':reference,'signal_time':now,'reason':reason}
+        self.state.update(inflight=intent,last_submit=now);save_state(self.path,self.state)
+        self.log({'event':'intent','mode':self.state['mode'],**intent})
+        if self.live:
+            response=self.client.request('POST','/v3/place_order',{'pair':pair,'side':side,'type':'MARKET','quantity':format(quantity,'.12f')},signed=True)
+            detail=response.get('OrderDetail',{})
+            self.log({'event':'exchange_response','timestamp':now,'response':response})
+            if detail.get('Status')!='FILLED':raise RuntimeError('Order not confirmed FILLED; reconciliation required')
+            price=float(detail.get('FilledAverPrice',reference))
+        else:
+            price=reference*(1+self.c.slippage_bps/10000 if side=='BUY' else 1-self.c.slippage_bps/10000)
+            cost=quantity*price;fee=cost*self.c.fee_bps/10000
+            if side=='BUY':
+                if cost+fee>self.state['cash']:raise RuntimeError('Paper fill exceeded reserved cash')
+                self.state['cash']-=cost+fee;self.state['inventory'][pair]=self.state['inventory'].get(pair,0)+quantity
+            else:
+                self.state['cash']+=cost-fee;self.state['inventory'][pair]=self.state['inventory'].get(pair,0)-quantity
+            self.log({'event':'paper_fill','timestamp':now,**intent,'price':price,'fee':fee})
+        self.state['fills']+=1;self.state['inflight']=None;save_state(self.path,self.state)
+        return price
+
+    def short(self,pair,kind,collateral,quotes,reason,now,leg=None):
+        """Open (collateral in USD) or fully close a 1x short. Returns the entry or close price, or None if refused."""
+        intent={'pair':pair,'kind':kind,'leg':leg,'collateral':collateral,'signal_time':now,'reason':reason}
+        self.state.update(inflight=intent,last_submit=now);save_state(self.path,self.state)
+        self.log({'event':'intent','mode':self.state['mode'],**intent})
+        if self.live:
+            try:
+                # Only the documented parameters may be signed: pair and collateral to open, pair alone to close.
+                if kind=='SHORT':response=self.client.request('POST','/v6/short_open',{'pair':pair,'collateral':format(collateral,'.2f')},signed=True)
+                else:response=self.client.request('POST','/v6/short_close',{'pair':pair},signed=True)
+            except APIError as error:
+                # The exchange answered and refused, so nothing changed. Anything else stays in flight and is reconciled.
+                self.log({'event':'short_refused','timestamp':now,'pair':pair,'kind':kind,'error':str(error)})
+                if kind=='SHORT' and any(word in str(error).lower() for word in ('not allow','permission')):self.no_shorts=True
+                self.state['inflight']=None;save_state(self.path,self.state);return None
+            self.log({'event':'exchange_response','timestamp':now,'response':response})
+            price=float(response.get('EntryPrice' if kind=='SHORT' else 'ClosePrice',0)) or quotes[pair]['bid' if kind=='SHORT' else 'ask']
+        else:
+            slip=self.c.slippage_bps/10000;rate=self.c.fee_bps/10000
+            if kind=='SHORT':
+                price=quotes[pair]['bid']*(1-slip);self.state['cash']-=collateral*(1+rate)
+                self.state['shorts'][pair]={'qty':collateral/price,'entry':price,'collateral':collateral}
+            else:
+                held=self.state['shorts'].pop(pair);price=quotes[pair]['ask']*(1+slip)
+                profit=max(-held['collateral'],held['qty']*(held['entry']-price))      # a short loses at most its collateral
+                self.state['cash']+=held['collateral']+profit-held['qty']*price*rate
+            self.log({'event':'paper_fill','timestamp':now,**intent,'price':price})
+        self.state['fills']+=1;self.state['inflight']=None;save_state(self.path,self.state)
+        return price
+
+    def act(self,action,account,quotes,now):
+        """Carry out one queued action against the current account. Sizes come from equity at this moment."""
+        pair,kind=action['pair'],action['action'];book=self.state['book'];rule=self.rules[pair]
+        opened={'leg':action.get('leg'),'bar':now//HOUR,'level':None}
+        budget=min(action.get('weight',0)*account['equity'],account['cash']/(1+self.c.fee_bps/10000)*.995)
+        if kind in ('BUY','SHORT') and budget<action['weight']*account['equity']/2:return False   # not enough cash for half the size
+        if kind=='SELL':
+            quantity=rule.quantity(account['longs'].get(pair,0))
+            if not rule.valid(quantity,quotes[pair]['bid']):book.pop(pair,None);return False
+            self.spot(pair,'SELL',quantity,quotes,action['reason'],now);book.pop(pair,None)
+        elif kind=='COVER':
+            if pair not in account['shorts']:book.pop(pair,None);return False
+            if self.short(pair,'COVER',0.,quotes,action['reason'],now) is None:
+                self.state['queue'].append(action);return False                  # refused: nothing changed, try again after the other actions
+            book.pop(pair,None)
+        elif kind=='BUY':
+            quantity=rule.quantity(budget/quotes[pair]['ask'])
+            if not rule.valid(quantity,quotes[pair]['ask']):return False
+            price=self.spot(pair,'BUY',quantity,quotes,action['reason'],now)
+            book[pair]=dict(opened,side=1,entry=price,high=price,low=price)
+        else:
+            collateral=math.floor(budget*100)/100
+            if collateral<1:return False
+            price=self.short(pair,'SHORT',collateral,quotes,action['reason'],now,action.get('leg'))
+            if price is None:
+                self.state['locks'][pair]=now//HOUR+24;return False              # refused: leave this pair alone for a day
+            book[pair]=dict(opened,side=-1,entry=price,high=price,low=price)
+        save_state(self.path,self.state);return True
+
+    def cycle_legs(self):
+        self.client.sync_clock();now=int(time.time()*1000+self.client.offset);candle_error=None;started=time.time()
+        try:self.refresh_features(now)
+        except Exception as e:   # without candles there is no new decision, but queued exits still run
+            candle_error=str(e);self.log({'event':'feature_error','timestamp':now,'error':candle_error})
+        refresh_seconds=round(time.time()-started,1)
+        quotes,now=self.read_quotes();state=self.state;book=state['book'];bar=now//HOUR-1
+        account=self.account(quotes)
+        pending=state.get('inflight')
+        if pending and pending.get('kind') in SHORT_KINDS:                       # an interrupted short request: trust the position list
+            pair=pending['pair'];held=account['shorts'].get(pair)
+            if pending['kind']=='SHORT' and held:
+                book[pair]={'leg':pending.get('leg'),'side':-1,'entry':held['entry'],'bar':now//HOUR,'high':held['entry'],'low':held['entry'],'level':None}
+            elif pending['kind']=='COVER' and not held:book.pop(pair,None)
+            elif pending['kind']=='COVER' and pair in book:state['queue'].append({'pair':pair,'action':'COVER','reason':pending['reason']})   # it did not close: try again
+            self.log({'event':'short_reconciled','timestamp':now,'pair':pair,'kind':pending['kind'],'open':bool(held)})
+            state['inflight']=None
+        for pair,p in list(book.items()):                                         # positions that no longer exist leave the book
+            gone=pair not in account['shorts'] if p['side']<0 else account['longs'].get(pair,0)*quotes[pair]['bid']<=self.rules[pair].minimum
+            if gone:del book[pair]
+        state['peak']=max(state.get('peak',account['equity']),account['equity'])
+        if account['equity']<=0 or 1-account['equity']/state['peak']>=self.c.max_drawdown:state['halted']=True
+        if self.feature_hour==now//HOUR and state.get('legs_bar')!=bar:
+            exits,entries=decide(self.features,self.labels,book,state['locks'],replace(self.c,allow_short=False) if self.no_shorts else self.c,bar)
+            carried=[a for a in state['queue'] if a['action'] in CLOSING and a['pair'] in book and a['pair'] not in exits]   # an exit not yet sent still stands
+            state['queue']=carried+[{'pair':p,'action':'SELL' if book[p]['side']>0 else 'COVER','reason':f"{book[p]['leg']} exit"} for p in exits]
+            state['queue']+=[{'pair':p,'action':'BUY' if side>0 else 'SHORT','leg':leg,'weight':weight,
+                              'reason':f"{leg} {'long' if side>0 else 'short'} in {self.labels.get(p)}"} for p,side,leg,weight in entries]
+            state['legs_bar']=bar
+            self.log({'event':'decision','timestamp':now,'bar':bar,'refresh_seconds':refresh_seconds,'labels':self.labels,'queue':state['queue']})
+        if state.get('legs_bar')!=bar or state['halted']:                         # an entry is good only in the hour after its candle, and never after a halt
+            state['queue']=[a for a in state['queue'] if a['action'] in CLOSING]
+        if state['halted']:                                                       # a halt closes everything, with or without candles
+            waiting={a['pair'] for a in state['queue']}
+            state['queue']+=[{'pair':p,'action':'SELL' if v['side']>0 else 'COVER','reason':'drawdown halt'} for p,v in book.items() if p not in waiting]
+        # Anything held but not in the book is not ours to keep: it is closed first and nothing is opened on top of it.
+        foreign=[(pair,'SELL','untracked holding') for pair,quantity in account['longs'].items()
+                 if pair not in book and quantity*quotes[pair]['bid']>self.rules[pair].minimum]
+        foreign+=[(pair,'COVER','untracked short') for pair in account['shorts'] if pair not in book]
+        for pair,kind,reason in foreign:
+            state['queue']=[a for a in state['queue'] if a['pair']!=pair]
+            state['queue'].insert(0,{'pair':pair,'action':kind,'reason':reason})
+        done=None
+        if now-state['last_submit']>=60000:                                       # one order per minute for the whole account
+            for action in list(state['queue']):
+                if not quotes[action['pair']].get('tradable',True):continue
+                state['queue'].remove(action);done=dict(action,filled=self.act(action,account,quotes,now));break
+        counts={k:sum(1 for v in self.labels.values() if v==k) for k in ('BULL','BEAR','CHOP')}
+        held={f"{leg}_{'long' if side>0 else 'short'}":sum(1 for p in book.values() if p['leg']==leg and p['side']==side) for leg in ('ema','mr') for side in (1,-1)}
+        self.log({'event':'snapshot','timestamp':now,'equity':account['equity'],'cash':account['cash'],'halted':state['halted'],
+                  'regimes':counts,'book':book,'queue':state['queue'],'done':done,'candle_error':candle_error})
+        save_state(self.path,state)
+        # No candles for this hour means no exit rule is being checked: say so every minute until they arrive.
+        if candle_error and self.feature_hour!=now//HOUR:raise ValueError('No candles for this hour, no decision made: '+candle_error)
+        return {'mode':state['mode'],'equity':account['equity'],'fills':state['fills'],'halted':state['halted'],'regimes':counts,
+                'positions':held,'queued':len(state['queue']),'done':f"{done['action']} {done['pair']}" if done and done['filled'] else None}
+
+    def cycle(self):
+        if self.legs:return self.cycle_legs()
+        self.client.sync_clock();now=int(time.time()*1000+self.client.offset)
+        try:self.refresh_features(now)
+        except Exception as e:
+            # Without candles, keep the last targets so exits and the brake still run.
+            if self.state.get('target_day') is None:raise
+            self.log({'event':'feature_error','timestamp':now,'error':str(e)})
+        # Obtain execution quotes AFTER potentially slow historical reads.
+        quotes,now=self.read_quotes()
         for pair,meta in list(self.state.get('position_meta',{}).items()):
             if pair in quotes:
                 meta['high']=max(float(meta.get('high',quotes[pair]['bid'])),quotes[pair]['bid'])
@@ -382,7 +567,7 @@ def main():
             try:print(json.dumps(runner.cycle()),flush=True)
             except Exception as e:
                 runner.log({'event':'error','timestamp':int(time.time()*1000),'error':str(e)})
-                if runner.state.get('inflight'):raise
+                if runner.state.get('inflight') and runner.state['inflight'].get('kind') not in SHORT_KINDS:raise
                 print(f'Cycle blocked: {e}',flush=True)
             cycles+=1
             if a.cycles==0 or cycles<a.cycles:time.sleep(60)

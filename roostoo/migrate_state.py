@@ -17,7 +17,8 @@ from .strategy import Config
 
 
 # Config fields added after earlier ledgers were hashed, newest group first.
-LEGACY_FIELDS = [{'breakout_high_bars', 'trail_atr'},
+LEGACY_FIELDS = [{'ema_fresh_bars', 'mr_window', 'mr_entry_z', 'mr_fraction', 'mr_slots', 'mr_hold_bars', 'mr_stop', 'mr_cooldown_bars'},
+                 {'breakout_high_bars', 'trail_atr'},
                  {'drawdown_brake', 'brake_window_bars'},
                  {'take_profit_pct', 'take_profit_trail', 'take_profit_fraction'}]
 
@@ -32,8 +33,9 @@ def digest(config, legacy=0):
 
 def supported(config):
     config.validate()
-    if config.allow_short or config.strategy not in ('allocation', 'cross_asset'):
-        raise ValueError('Migration supports long-only allocation strategies only')
+    legs = config.rank_model == 'regime_legs'
+    if (config.allow_short and not legs) or config.strategy not in ('allocation', 'cross_asset'):
+        raise ValueError('Migration supports long-only allocation strategies, and shorts only in the regime-legs mode')
     if config.strategy == 'cross_asset' and config.rank_model not in ('regime_adaptive', 'trend_budget'):
         raise ValueError('Live cross-asset execution requires regime_adaptive or trend_budget')
 
@@ -103,8 +105,10 @@ def migrate(path, config, universe, live, client):
                     raise ValueError('Invalid wallet balance')
             if asset != 'USD' and float(balance.get('Free', 0)) > 0 and asset + '/USD' not in rules:
                 raise ValueError(f'Held asset {asset} is outside the new execution universe')
+        if config.rank_model != 'regime_legs' and state.get('shorts'):
+            raise ValueError('Paper short positions are open: close them under regime_legs before switching strategy')
         if live:
-            if client.short_positions().get('Positions'):
+            if config.rank_model != 'regime_legs' and client.short_positions().get('Positions'):
                 raise ValueError('Short positions require reconciliation')
             try:
                 pending = client.request('GET', '/v3/pending_count', signed=True)
@@ -122,7 +126,9 @@ def migrate(path, config, universe, live, client):
         # Keep fills, cash, holdings, equity peak, halt and submission throttle.
         # Only unsubmitted decisions are invalidated for the new strategy.
         # Trailing-stop levels belong to the old rule; high-water marks are kept, so they rebuild under the new one.
-        updated = dict(state, config_hash=digest(config), pending=None, targets={}, stop_levels={},
+        # Positions of another strategy are not this one's: its book starts empty and the runner releases what it finds.
+        book = state.get('book', {}) if previous.rank_model == config.rank_model == 'regime_legs' else {}
+        updated = dict(state, config_hash=digest(config), pending=None, targets={}, stop_levels={}, queue=[], legs_bar=None, book=book,
                        target_day=None, target_regime=None, market_regime=None, regime_age=0)
         append_event(path, {'event': 'config_migration', 'timestamp': int(time.time()*1000),
                             'mode': state['mode'], 'old_config_hash': state['config_hash'],

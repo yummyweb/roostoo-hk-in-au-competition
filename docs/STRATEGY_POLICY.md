@@ -25,8 +25,11 @@ Retired from active exploration:
   for the breadth classifier. The calm state did not reliably predict market
   direction out of sample: the sign changed between sub-periods and sampling
   offsets, and gating breakout entries on it helped one half of the test
-  period and hurt the other. `scripts/fit_regime_hmm.py` reproduces the fit and
-  the validation; `roostoo/regime_hmm.py` applies it. It is not used for orders.
+  period and hurt the other. `scripts/fit_regime_hmm.py` reproduces the Bitcoin
+  fit and the validation. That market-wide gate is not used for orders; since
+  October 8 the same method, fitted per coin on the 24-hour return and
+  volatility (`scripts/fit_coin_regime.py`, `config/coin_regime.json`), labels
+  each coin for the live regime strategy through `roostoo/regime_hmm.py`.
 - Mean reversion gated on the breadth classifier's CHOP label: buying pairs two
   or more standard deviations below their own rolling mean lost on average in
   every tested window, stop and filter variant; shorting the mirror image lost
@@ -37,12 +40,13 @@ Retired from active exploration:
   design period and then lost in all three held-back periods; no z-score
   setting was positive after stress costs on the design period and the
   least-bad one lost in three of four periods; the regime switch added nothing
-  over a placebo label. Shorting when the market is weak, a Bitcoin trend gate
-  on entries, a standing Bitcoin hedge and maker-only execution were tested in
-  the same study and are not used.
+  over a placebo label. The team nevertheless runs this design live since
+  October 8 (last paragraph), including shorts in BEAR and CHOP coins. A
+  Bitcoin trend gate on entries, a standing Bitcoin hedge and maker-only
+  execution were tested in the same study and are not used.
 - Earlier Donchian channel breakout variants (before October 6; the
-  momentum-gated breakout now live is a different rule, see the last
-  paragraph): low turnover and sometimes positive under stress,
+  momentum-gated breakout kept as `config/breakout_candidate.json` is a
+  different rule, see the last paragraph): low turnover and sometimes positive under stress,
   but they still lost in broad chronological blocks. A breakout exception in
   BEAR/CHOP was especially poor and remains retired.
 
@@ -73,10 +77,12 @@ low-turnover pipeline:
 
 The headless runner briefly ran a short-window version of this regime logic
 (October 5-6). In an hourly replay it flipped regime several times a day and
-its fees exceeded its gross edge, so it is retired. The runner now trades a
-four-slot breakout rotation with ATR trailing stops, the only family that was
-positive in every held-back period of the October 7 study and a deliberate
-high-variance choice for the return screen; the strength-gated trend ensemble with a gradual
+its fees exceeded its gross edge, so it is retired. On October 8 the team chose
+to run its own design live: a per-coin BULL/BEAR/CHOP label picking between an
+EMA crossover (long and short) and z-score mean reversion (README, "Updating
+the running bot"). The four-slot breakout rotation with ATR trailing stops, the
+only family positive in every held-back period of the October 7 study, stays
+available as `config/breakout_candidate.json`; the strength-gated trend ensemble with a gradual
 drawdown brake remains the supported lower-risk preset. Any promotion
 requires a frozen paper period, current Roostoo quotes, and reconciliation of
 the exact account and pair rules.

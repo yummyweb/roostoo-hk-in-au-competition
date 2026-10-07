@@ -1,0 +1,12 @@
+features ok (largest difference from brute force 9.7e-13; finite from row 24)
+rules ok: 2505 bars, 538 orders identical to the independent rule engine; by leg/kind {('ema', 'BUY'): 47, ('mr', 'SHORT'): 84, ('mr', 'BUY'): 73, ('mr', 'COVER'): 84, ('ema', 'SHORT'): 69, ('ema', 'SELL'): 47, ('mr', 'SELL'): 69, ('ema', 'COVER'): 65}
+trades 265, rejected orders (cash) 0, max orders in one hour 11, exit reasons ['signal']
+max bars held by an MR trade: 49
+features ok (largest difference from brute force 6.9e-13; finite from row 24)
+rules ok: 2506 bars, 518 orders identical to the independent rule engine; by leg/kind {('ema', 'SHORT'): 82, ('mr', 'BUY'): 72, ('ema', 'BUY'): 45, ('ema', 'COVER'): 79, ('ema', 'SELL'): 44, ('mr', 'SELL'): 71, ('mr', 'SHORT'): 63, ('mr', 'COVER'): 62}
+trades 256, rejected orders (cash) 0, max orders in one hour 9, exit reasons ['signal']
+max bars held by an MR trade: 49
+features ok (largest difference from brute force 7.8e-13; finite from row 24)
+rules ok: 3227 bars, 241 orders identical to the independent rule engine; by leg/kind {('mr', 'BUY'): 25, ('mr', 'SELL'): 22, ('ema', 'BUY'): 27, ('ema', 'SELL'): 27, ('ema', 'SHORT'): 44, ('ema', 'COVER'): 43, ('mr', 'SHORT'): 27, ('mr', 'COVER'): 26}
+trades 118, rejected orders (cash) 3, max orders in one hour 3, exit reasons ['signal']
+max bars held by an MR trade: 49

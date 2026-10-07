@@ -1,0 +1,191 @@
+team_final - the team's strategy (regime-switched EMA crossover + z-score mean reversion, long and short)
+=====================================================================================================================
+Plain statements of what was built and measured. Dollar figures are on a $100,000 start. All runs use the lab's default
+costs (taker 10 bp, short 10 bp, spread, 2 bp slippage); "stress" is evalkit.STRESS. P&L by leg and side is the net
+P&L of closed trades (positions still open at the end of a run are in the totals but not in these columns).
+
+FILES (all in work/team_final/)
+  tf.py               the strategy: features(), regime_labels() (memoised per panel object), class TeamFinal
+  candidate_1.py      frozen candidate: R = 24, V = 24; make(panel)
+  test_tf.py          independent audit of the rules (second rule engine, bar-by-bar order comparison)
+  run_design.py       the 9 window pairs on the design panel -> design_windows.json, run_design.log
+  run_frozen.py       look-ahead check and the frozen candidate per period -> causality.json, frozen_periods.json
+  live_fit.py         one fit on all rows of the full panel -> coin_regime.json
+  live_check.py       pure-Python forward filter (function regime_labels, `math` only) and its check against the lab
+  make_report.py      writes this file and tables.json from the JSON files above
+  before_tie_fix/     the first set of runs, made before the tie tolerance described in section 8 was added
+
+1. WHAT IS IMPLEMENTED
+  Decisions once per hour at the close of the completed candle t, from rows <= t; market orders that fill at the open of
+  t+1; all pairs of the panel; nothing before bar 600. No Position.stop, no take levels, no limit orders.
+  Regime: two features per coin and hour (R-hour log return; V-hour population std of 1-hour log returns), standardised
+    with the mean/sd of the training rows; regime.walk_forward(X, first_train=1500, step=336, K=3, order_by=0,
+    use_hmm=True): K-Means -> 3-state Gaussian HMM, one model pooled over coins, expanding window, refit every 336 bars,
+    labels = argmax of the forward filter. At every refit the state with the highest training mean of the return feature
+    is BULL, the lowest BEAR, the middle CHOP. First labelled row = max(R, V) + 1500.
+  EMA leg ('ema'): EMA48 / EMA200 (ind.ema), ATR24 (ind.atr). BUY if label BULL and EMA48 > EMA200 for at most 12 bars;
+    SHORT if label BEAR and EMA48 < EMA200 for at most 12 bars. Ranked by |EMA48 - EMA200| / ATR24, at most 4 positions.
+    Size min(0.2475 x equity, 0.01 x equity / d), d = 6 x ATR24 / close. Exit at the next open when EMA48 is back across
+    EMA200 (coin blocked for 6 bars) or the hourly close is at or through the trailing level (long: running max of
+    max(highest high since entry, close) - 6 x ATR24; short: running min of min(lowest low since entry, close) + 6 x ATR24).
+  MR leg ('mr'): z = (close - SMA168) / population std 168. Label CHOP and z <= -3: BUY; z >= +3: SHORT. 5% of equity,
+    at most 10 positions, largest |z| first, coins with a position or picked by the EMA leg in the same bar are skipped.
+    Exit at the first hourly close with z >= 0 (long) / z <= 0 (short), or 48 bars after entry, or when the close is 20%
+    or more against the entry price. 12-bar cooldown after any MR exit.
+  Exits never look at the label. Shorts use SHORT / COVER with usd = position size as collateral.
+
+2. DESIGN PERIOD: THE 9 FEATURE-WINDOW PAIRS  (harness.load('design') only, rows 1900-7518, 9 variants run, nothing else varied)
+  Coins over these rows: equal-weight -53.6%, BTC -40.4%.
+
+  2a. Regime labels (share of coin-hours, rows >= 1900; every label is known from row 1900 on; all fits converged)
+| R | V | BEAR | CHOP | BULL | label changes per coin per 14 d | last model, mean R-h log return / hourly vol: BEAR ; CHOP ; BULL | coin-hours carrying each label, mean R-h log return / hourly vol: BEAR ; CHOP ; BULL |
+|---|---|---|---|---|---|---|---|
+| 24 | 24 | 43.3% | 41.3% | 15.4% | 9.2 | -0.67% / 0.94% ; -0.27% / 0.50% ; +0.90% / 1.77% | -0.73% / 0.92% ; -0.26% / 0.53% ; -0.17% / 1.78% |
+| 24 | 72 | 43.9% | 40.5% | 15.6% | 4.2 | -0.65% / 0.99% ; -0.22% / 0.58% ; +0.74% / 1.72% | -0.77% / 0.98% ; -0.28% / 0.58% ; +0.01% / 1.76% |
+| 24 | 168 | 42.3% | 38.4% | 19.2% | 2.6 | -0.66% / 1.02% ; -0.14% / 0.63% ; +0.31% / 1.68% | -0.77% / 1.00% ; -0.14% / 0.64% ; -0.36% / 1.59% |
+| 72 | 24 | 41.6% | 37.7% | 20.6% | 8.4 | -5.61% / 0.86% ; +1.66% / 1.61% ; +2.58% / 0.60% | -5.79% / 0.86% ; +2.39% / 0.61% ; +0.86% / 1.47% |
+| 72 | 72 | 43.3% | 30.1% | 26.6% | 6.2 | -5.55% / 0.92% ; +1.85% / 1.64% ; +2.75% / 0.66% | -5.51% / 0.91% ; +3.05% / 0.68% ; +0.51% / 1.29% |
+| 72 | 168 | 44.1% | 26.2% | 29.7% | 5.8 | -5.26% / 0.94% ; +1.15% / 1.61% ; +2.93% / 0.70% | -5.20% / 0.93% ; +1.24% / 1.02% ; +2.16% / 0.99% |
+| 168 | 24 | 42.7% | 37.9% | 19.4% | 6.1 | -10.49% / 0.85% ; +2.96% / 0.63% ; +4.36% / 1.59% | -10.03% / 0.85% ; +2.54% / 0.60% ; +1.79% / 1.57% |
+| 168 | 72 | 44.3% | 25.9% | 29.8% | 4.7 | -9.81% / 0.91% ; +3.62% / 1.66% ; +3.68% / 0.68% | -8.99% / 0.90% ; -1.53% / 1.20% ; +4.71% / 0.79% |
+| 168 | 168 | 48.1% | 18.5% | 33.4% | 3.2 | -9.33% / 0.95% ; +3.34% / 1.66% ; +4.09% / 0.70% | -8.18% / 0.92% ; -3.41% / 1.52% ; +4.76% / 0.74% |
+
+  2b. Complete strategy from row 1900 (evalkit.report(check=False); fresh = h.fresh_windows(days=11, step_days=3, start=1900), 75 windows)
+| R | V | total | max DD | thirds | stress total | EMA long $ (n) | EMA short $ (n) | MR long $ (n) | MR short $ (n) | trades | days with a trade | fresh 11 d mean / median / >0 / worst | mean total of cell + adjacent cells |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 24 | 24 | +17.7% | 16.6% | -6.2% / +22.9% / +2.2% | +7.0% | -4,173 (107) | +28,770 (145) | -3,165 (99) | -4,167 (113) | 464 | 84% | +1.19% / +0.91% / 60% / -9.3% | +11.2% (worst +2.4%) |
+| 24 | 72 | +13.5% | 15.5% | -3.2% / +21.2% / -3.3% | +2.5% | -10,128 (99) | +37,516 (136) | -6,808 (146) | -7,532 (139) | 520 | 86% | +0.74% / +0.28% / 56% / -8.0% | +5.3% (worst -12.7%) |
+| 24 | 168 | +2.5% | 17.3% | -9.7% / +20.9% / -6.1% | -8.8% | -9,358 (102) | +23,612 (142) | -6,742 (156) | -7,835 (166) | 566 | 87% | +0.38% / -0.14% / 49% / -7.3% | +6.4% (worst +2.5%) |
+| 72 | 24 | +2.4% | 23.1% | -18.1% / +34.7% / -7.2% | -8.2% | -2,363 (103) | +16,757 (159) | -3,194 (49) | -9,688 (199) | 510 | 85% | +0.57% / +0.30% / 55% / -10.5% | +5.2% (worst -12.7%) |
+| 72 | 72 | -12.7% | 25.5% | -19.2% / +20.4% / -10.2% | -21.8% | -17,270 (118) | +21,477 (155) | -4,243 (56) | -13,046 (196) | 525 | 86% | -0.34% / -0.77% / 44% / -8.3% | -0.7% (worst -12.7%) |
+| 72 | 168 | +3.2% | 22.7% | -16.3% / +21.0% / +1.9% | -8.3% | -10,272 (120) | +16,349 (138) | +9,490 (72) | -12,809 (183) | 513 | 87% | +0.00% / -0.75% / 44% / -10.2% | +6.4% (worst -12.7%) |
+| 168 | 24 | +13.3% | 23.0% | -11.5% / +34.5% / -4.8% | +2.5% | -5,349 (102) | +29,122 (138) | -2,121 (68) | -9,319 (201) | 509 | 83% | +0.62% / +0.11% / 52% / -8.0% | +2.0% (worst -9.7%) |
+| 168 | 72 | -9.7% | 26.7% | -11.4% / +1.6% / +0.4% | -18.5% | -6,054 (121) | +14,713 (132) | -3,902 (82) | -15,143 (158) | 493 | 86% | -0.52% / -0.36% / 45% / -8.8% | +5.9% (worst -12.7%) |
+| 168 | 168 | +32.7% | 17.7% | +24.4% / +2.4% / +4.1% | +19.3% | +17,899 (128) | +22,565 (131) | +6,237 (62) | -15,356 (91) | 412 | 82% | +1.32% / +0.27% / 55% / -11.2% | +8.7% (worst -9.7%) |
+
+  Grid of totals (rows R, columns V = 24, 72, 168):
+    R=24    +17.7%   +13.5%    +2.5%
+    R=72     +2.4%   -12.7%    +3.2%
+    R=168   +13.3%    -9.7%   +32.7%
+
+3. CHOICE: R = 24, V = 24
+  Rule applied: all three labels at least about 10% of coin-hours (true for all 9 pairs; the smallest label share
+  in any of them is 15.4%, BULL at (24, 24)); then the pair whose own total and adjacent cells' totals are best together,
+  not the single best cell. (24, 24): total +17.7%, adjacent cells +13.5% and +2.4%, mean of the three
+  +11.2%, the highest of the 9; its adjacent cells are all above zero (also true of (24, 168) only). It is the second-best
+  single cell, positive under stress costs (+7.0%), and has the highest fresh 11-day median (+0.91%)
+  and share of fresh windows above zero (60%). The best single cell is (168, 168) at +32.7%; its adjacent
+  cells are -9.7% and +3.2%.
+  Measured facts about the chosen cell on design: thirds -6.2% / +22.9% / +2.2%; closed-trade P&L, EMA long | EMA short |
+  MR long | MR short: -4,173 (107) | +28,770 (145) | -3,165 (99) | -4,167 (113) (only EMA short is positive); it has the most label changes
+  of the 9 pairs (9.2 per coin per 14 days).
+
+4. LOOK-AHEAD CHECK
+  h.causality_check(candidate_1.make, design, cuts=8, start=744) -> ok = True, detail = None
+  (run on the final code; the same check on the code before the tie tolerance also returned True).
+
+5. THE FROZEN CANDIDATE, ONCE PER PERIOD  (exam.score(make, P, start, P.T); choice not revisited)
+| period | coins / BTC over the period | total | max DD | stress total | Sharpe | fresh 11 d mean / median / >0 / worst | trades | days with a trade | EMA long $ (n) | EMA short $ (n) | MR long $ (n) | MR short $ (n) |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| design (rows 1900-7518; the windows were chosen here) | -53.6% / -40.4% | +17.7% | 16.6% | +7.0% | 1.11 | +1.19% / +0.91% / 60% / -9.3% | 464 | 84% | -4,173 (107) | +28,770 (145) | -3,165 (99) | -4,167 (113) |
+| select (rows 7519-10024) | -10.9% / -10.5% | +3.5% | 19.3% | -1.6% | 0.63 | -0.16% / -0.14% / 50% / -8.9% | 265 | 91% | +4,198 (47) | -1,803 (65) | -1,282 (69) | -1,531 (84) |
+| holdout (full, rows 10025-12531) | +60.2% / +36.6% | -13.5% | 15.7% | -18.2% | -2.21 | -0.16% / -0.70% / 44% / -8.1% | 256 | 93% | +8,362 (44) | -17,639 (79) | +3,330 (71) | -7,845 (62) |
+| early12 (12 majors, rows 1900-5127) | -29.4% / -3.3% | -19.2% | 19.7% | -20.8% | -2.47 | -1.30% / -1.32% / 24% / -7.2% | 118 | 66% | -10,575 (27) | +2,319 (43) | -3,493 (22) | -7,119 (26) |
+
+  Regime labels of the frozen candidate in each period
+| period | BEAR | CHOP | BULL | label changes per coin per 14 d | coin-hours carrying each label, mean 24 h log return / hourly vol: BEAR ; CHOP ; BULL | orders rejected for lack of cash |
+|---|---|---|---|---|---|---|
+| design | 43.3% | 41.3% | 15.4% | 9.2 | -0.73% / 0.92% ; -0.26% / 0.53% ; -0.17% / 1.78% | 0 |
+| select | 35.5% | 53.2% | 11.3% | 7.4 | -0.22% / 0.91% ; -0.39% / 0.48% ; +1.36% / 1.79% | 0 |
+| full | 35.3% | 51.1% | 13.6% | 7.2 | +0.19% / 0.89% ; -0.21% / 0.45% ; +3.29% / 1.74% | 0 |
+| early12 | 38.3% | 40.7% | 21.0% | 9.0 | -0.20% / 0.79% ; -0.23% / 0.68% ; -0.67% / 1.74% | 3 |
+
+6. REGIME STATISTICS FOR R = 24, V = 24
+  Design, rows >= 1900: BEAR 43.3%, CHOP 41.3%, BULL 15.4% of coin-hours; 9.2 label changes per coin per 14 days.
+  State means of every walk-forward refit on design (mean 24 h log return / mean hourly vol, raw units):
+| fitted on rows < | BEAR | CHOP | BULL | EM iterations |
+|---|---|---|---|---|
+| 1524 | -0.31% / 0.49% | -0.10% / 0.89% | +0.29% / 1.54% | 65 |
+| 1860 | -0.08% / 0.47% | +0.27% / 0.88% | +0.88% / 1.53% | 17 |
+| 2196 | -0.07% / 0.91% | +0.06% / 0.49% | +0.65% / 1.59% | 21 |
+| 2532 | +0.03% / 0.89% | +0.29% / 0.48% | +0.38% / 1.53% | 27 |
+| 2868 | -0.17% / 0.87% | +0.14% / 0.48% | +0.58% / 1.50% | 17 |
+| 3204 | -0.05% / 0.85% | +0.31% / 0.46% | +0.43% / 1.48% | 15 |
+| 3540 | -0.23% / 0.86% | +0.13% / 0.47% | +0.55% / 1.49% | 25 |
+| 3876 | -0.55% / 0.93% | +0.19% / 0.49% | +1.66% / 1.70% | 36 |
+| 4212 | -0.78% / 0.99% | +0.16% / 0.52% | +2.05% / 1.95% | 23 |
+| 4548 | -0.79% / 1.00% | +0.15% / 0.52% | +1.97% / 1.98% | 10 |
+| 4884 | -0.90% / 1.01% | +0.08% / 0.53% | +1.58% / 1.98% | 15 |
+| 5220 | -0.80% / 1.00% | +0.05% / 0.53% | +1.33% / 1.95% | 7 |
+| 5556 | -0.86% / 1.00% | +0.02% / 0.53% | +1.30% / 1.93% | 8 |
+| 5892 | -0.71% / 0.98% | -0.05% / 0.51% | +1.31% / 1.90% | 12 |
+| 6228 | -0.67% / 0.97% | -0.06% / 0.51% | +1.39% / 1.87% | 11 |
+| 6564 | -0.72% / 0.96% | -0.13% / 0.51% | +1.24% / 1.86% | 6 |
+| 6900 | -0.73% / 0.95% | -0.17% / 0.50% | +0.78% / 1.80% | 22 |
+| 7236 | -0.67% / 0.94% | -0.27% / 0.50% | +0.90% / 1.77% | 12 |
+  The three states differ mainly in the volatility feature (about 0.5%, 0.9% and 1.5-2.0% per hour); the differences in
+  mean 24 h return between them are 0.1 to 2.8 percentage points against a feature standard deviation of about 5% (0.052 in the full-panel fit).
+  In the first two fits (labels of rows 1524-2195) the lowest-return state is the low-volatility one; from the fit at row
+  2196 on, BEAR is the middle-volatility state, CHOP the low-volatility state and BULL the high-volatility state.
+  Mean 24 h log return of the coin-hours that carried each label in the evaluated rows (out of sample for the model that
+  labelled them): design BEAR -0.73%, CHOP -0.26%, BULL -0.17%; the other periods are in the table of section 5.
+
+7. LIVE MODEL (work/team_final/coin_regime.json)
+  One fit (regime.fit, K=3, K-Means start, seed 0) on the standardised features of every coin-hour with finite features of
+  harness.load('full'): rows 24..12531, 50 pairs, 625,400 coin-hours, candles 2025-05-02T16:00:00Z to 2026-10-06T19:00:00Z (open times).
+  EM iterations 46, converged True, log likelihood -964781.0.
+  bull_state = 1, bear_state = 2, chop_state = 0 (indices into means / covariances / transition / start; means and
+  covariances are in standardised units, z = (x - feature_mean) / feature_std).
+  BEAR: state 2, mean 24h log return -0.0039, mean 24h hourly vol 0.0089, share of coin-hours (filtered, in-sample) 44.1%, P(stay) 0.9756
+  CHOP: state 0, mean 24h log return -0.0026, mean 24h hourly vol 0.0046, share of coin-hours (filtered, in-sample) 39.8%, P(stay) 0.9835
+  BULL: state 1, mean 24h log return +0.0111, mean 24h hourly vol 0.0171, share of coin-hours (filtered, in-sample) 16.1%, P(stay) 0.9738
+  log likelihood -964781.0362049553 iterations 46 converged True
+  BTC/USD: last 500 hours, pure-Python filter vs lab labels: agreement 100.0% with the full history, 100.0% from the last 1,200 closes only | lab labels BULL 0 BEAR 41 CHOP 459
+  BONK/USD: last 500 hours, pure-Python filter vs lab labels: agreement 100.0% with the full history, 100.0% from the last 1,200 closes only | lab labels BULL 184 BEAR 300 CHOP 16
+  This model is fitted on all rows, so its labels inside the sample are not walk-forward labels; the backtests above use
+  walk-forward labels only. The backtested strategy refits every 336 bars; the JSON is one fixed model.
+
+8. TESTS
+  test_tf.py (independent rule engine with its own EMA / ATR / SMA / std code and its own trailing-level and cooldown
+  book-keeping; the book is photographed before every on_bar call and the orders the spec requires are compared with the
+  orders the strategy returned: coin, kind, dollar size, tag):
+    design  R=72 V=72 rows 1900+ : 5,618 bars, 1,084 orders identical (first version of the code)
+    design  R=24 V=24 rows 1900+ : 5,618 bars,   932 orders identical
+    select  R=24 V=24 rows 7519+ : 2,505 bars,   538 orders identical
+    full    R=24 V=24 rows 10025+: 2,506 bars,   518 orders identical
+    early12 R=24 V=24 rows 1900+ : 3,227 bars,   241 orders identical
+  Also asserted in every run: features equal a brute-force recomputation at 300 random points (largest difference 1e-12),
+  no order carries a limit, stop or take, no order before bar 600, never more than 4 EMA or 10 MR positions, every exit
+  is recorded by the harness as a strategy order ('signal'), no MR trade is held more than 49 bars (48 + the fill bar).
+  The first run of the audit on (24, 24) found one difference: design bar 2234, an EMA short whose close (8.84) was equal
+  to its trailing level in exact arithmetic while the level computed from ind.atr (rolling sums) was 8.840000000000025,
+  so the cover came one bar late. tf.py now treats a close within 1e-9 (relative) of the trailing level as AT the level.
+  All numbers in sections 2-5 are from the code with that tolerance. Effect of the change on the 9 design cells: at most
+  0.21 percentage points of total return; the rule of section 3 picks (24, 24) before and after. Per period:
+| period | total before | total after | max DD before | after | stress before | after | trades before | after |
+|---|---|---|---|---|---|---|---|---|
+| design | +17.73% | +17.71% | 16.55% | 16.56% | +6.97% | +6.95% | 464 | 464 |
+| select | +3.44% | +3.47% | 19.30% | 19.27% | -1.60% | -1.58% | 265 | 265 |
+| full | -13.51% | -13.51% | 15.75% | 15.75% | -18.21% | -18.21% | 256 | 256 |
+| early12 | -19.18% | -19.18% | 19.68% | 19.68% | -20.75% | -20.75% | 118 | 118 |
+
+9. NOTES AND DEVIATIONS
+  - Location. The lab path named in the task did not exist. The lab was found at
+    /Users/antarikshverma/Dev/quant-competition-roostoo/research/lab (inside the git repository) and copied, unchanged, to
+    the path named in the task; all work was done in the copy. Nothing was written to the repository.
+  - data/paper57.txt is not in the lab. The regime method is the one in the lab's regime.py (K-Means-initialised Gaussian
+    HMM, walk_forward), used unmodified with its default iteration cap (150) and seed (0).
+  - Order of runs. The audit on the chosen pair and the period runs of task (c) were started in one chain and the audit's
+    failure did not stop the chain, so the select / holdout / early12 numbers were first produced by the code without the
+    tie tolerance, and were produced again after it was added. Both sets are in the table of section 8. The window choice
+    was made and frozen before either set existed and was not changed.
+  - Cooldowns, as in the earlier ts.py: the 6-bar block after an EMA cross-back exit counts from the decision bar
+    (no new entry on that coin at the next 5 closes); the 12-bar MR cooldown counts from the bar the exit fills (the
+    first new entry decision is 12 bars after the fill). Both block the coin for both legs.
+  - "48 bars after entry" is measured from the fill bar; the time exit fills at the open 49 bars after the entry fill.
+  - Cash. 4 EMA positions of up to 24.75% and 10 MR positions of 5% can ask for more than the account holds. The harness
+    fills what free cash allows and rejects an order when less than $1 is free. Rejected orders in the frozen runs:
+    design 0, select 0, holdout 0, early12 3.
+  - first_train = 1500 bars counted from the first row with finite features (row max(R, V)); step = 336.
+  - The label-to-state map (BULL / BEAR / CHOP by training mean of the return feature) is recomputed at every refit, as
+    regime.walk_forward(order_by=0) does.

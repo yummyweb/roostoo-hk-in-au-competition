@@ -25,18 +25,22 @@ def density(z,mean,cov):
 
 
 class RegimeFilter:
+    """Forward filter for one coin. The two features are the log return over `return_bars` hours and the standard
+    deviation of hourly log returns over `vol_bars` hours (1 and 24 unless the parameter file says otherwise)."""
     def __init__(self,params=None):
         self.p=params or json.loads(PARAMS.read_text())
-        self.returns=deque(maxlen=WINDOW);self.previous=None;self.alpha=None
+        self.span=int(self.p.get('return_bars',1));self.window=int(self.p.get('vol_bars',WINDOW))
+        self.returns=deque(maxlen=max(self.span,self.window));self.previous=None;self.alpha=None
 
     def update(self,close):
         """Advance one completed hourly close. Returns P(state | closes so far), or None while warming up."""
         if self.previous is not None:self.returns.append(math.log(close/self.previous))
         self.previous=close
-        if len(self.returns)<WINDOW:return None
-        mean=sum(self.returns)/WINDOW
-        volatility=math.sqrt(max(0,sum(x*x for x in self.returns)/WINDOW-mean*mean))
-        z=[(value-m)/s for value,m,s in zip((self.returns[-1],volatility),self.p['feature_mean'],self.p['feature_std'])]
+        if len(self.returns)<self.returns.maxlen:return None
+        recent=list(self.returns);tail=recent[-self.window:]
+        mean=sum(tail)/self.window
+        volatility=math.sqrt(max(0,sum(x*x for x in tail)/self.window-mean*mean))
+        z=[(value-m)/s for value,m,s in zip((sum(recent[-self.span:]),volatility),self.p['feature_mean'],self.p['feature_std'])]
         states=range(len(self.p['means']))
         prior=self.p['start'] if self.alpha is None else [sum(self.alpha[i]*self.p['transition'][i][j] for i in states) for j in states]
         posterior=[prior[k]*density(z,self.p['means'][k],self.p['covariances'][k]) for k in states]
@@ -44,6 +48,13 @@ class RegimeFilter:
         # An observation too extreme for every state carries no information; keep the prior.
         self.alpha=[x/total for x in posterior] if total>0 else prior
         return self.alpha
+
+    @property
+    def label(self):
+        """'BULL', 'BEAR' or 'CHOP' for a three-state coin model, or None while warming up."""
+        if self.alpha is None:return None
+        state=max(range(len(self.alpha)),key=self.alpha.__getitem__)
+        return 'BULL' if state==self.p['bull_state'] else 'BEAR' if state==self.p['bear_state'] else 'CHOP'
 
     @property
     def calm(self):

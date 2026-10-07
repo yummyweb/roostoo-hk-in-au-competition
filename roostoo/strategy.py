@@ -52,14 +52,26 @@ class Config:
     breakout_high_bars: int = 72
     # Trailing exit as a multiple of the 24-bar average true range; 0 uses the fixed take_profit_trail fraction.
     trail_atr: float = 0.0
+    # Regime legs (rank_model 'regime_legs'): a per-coin regime label picks the leg. BULL and BEAR coins trade the
+    # fast/slow EMA crossover (long / short), CHOP coins trade z-score mean reversion on both sides.
+    ema_fresh_bars: int = 12        # an EMA entry is allowed this many bars after the cross
+    mr_window: int = 168            # bars in the mean and standard deviation of the z-score
+    mr_entry_z: float = 3.0         # enter when the close is this many standard deviations from its mean
+    mr_fraction: float = .05        # equity share of one mean-reversion position
+    mr_slots: int = 10              # most mean-reversion positions at once
+    mr_hold_bars: int = 48          # time limit of a mean-reversion position
+    mr_stop: float = .20            # exit when an hourly close is this far against the entry
+    mr_cooldown_bars: int = 12      # bars a coin waits after a mean-reversion exit
 
     def validate(self):
         if self.strategy not in ('trend','hybrid','rotation','pullback','reversion','allocation','lstm_prediction','cross_asset','buy_hold','cash'):
             raise ValueError('Unknown strategy')
-        if self.rank_model not in ('momentum','ridge_72','boosted_24','boosted_72','trend_budget','regime_adaptive','breakout'):
+        if self.rank_model not in ('momentum','ridge_72','boosted_24','boosted_72','trend_budget','regime_adaptive','breakout','regime_legs'):
             raise ValueError('Unknown cross-asset ranking model')
         if type(self.rank_liquidity_top_n) is not int or not 1 <= self.rank_liquidity_top_n <= 500:
             raise ValueError('Invalid liquidity universe size')
+        if type(self.allow_short) is not bool or type(self.top_n) is not int or type(self.cooldown_bars) is not int:
+            raise ValueError('allow_short must be true/false; top_n and cooldown_bars must be integers')
         if not 0 <= self.rank_min_trend_strength <= 1:
             raise ValueError('Trend-strength gate must be between 0 and 1')
         if not .01 <= self.regime_min_move <= .5:
@@ -73,6 +85,9 @@ class Config:
         # trail_atr counts whole ATRs; a fraction such as 0.06 is a take_profit_trail value typed in the wrong field.
         if type(self.breakout_high_bars) is not int or not 2 <= self.breakout_high_bars <= 720 or not (self.trail_atr == 0 or 1 <= self.trail_atr <= 20):
             raise ValueError('Invalid breakout window or ATR trail')
+        if any(type(v) is not int or not 1 <= v <= 1000 for v in (self.ema_fresh_bars,self.mr_window,self.mr_slots,self.mr_hold_bars,self.mr_cooldown_bars)) \
+                or self.mr_window < 20 or not 0 < self.mr_entry_z <= 10 or not 0 < self.mr_fraction <= 1 or not 0 < self.mr_stop < 1:
+            raise ValueError('Invalid regime-legs configuration')
         if not 2 <= self.fast < self.slow <= 1000 or not 2 <= self.momentum <= 1000:
             raise ValueError('Require 2 <= fast < slow <= 1000 and a valid momentum window')
         if any(not math.isfinite(v) for v in asdict(self).values() if isinstance(v, (float,int))):
@@ -105,6 +120,34 @@ class Indicators:
         self.ranges24 = deque(maxlen=24)
         self.fast = self.slow = None
         self.count = 0
+        self.legs = config.rank_model == 'regime_legs'
+        if self.legs:
+            self.seed = [0.,0.]; self.ema = [None,None]          # fast and slow EMA, each seeded with the mean of its first window
+            self.on = [False,False]; self.age = [10**6,10**6]    # bars since fast went above / below slow
+            self.window = deque(maxlen=config.mr_window); self.total = self.squares = 0.
+
+    def legs_row(self, bar):
+        """Inputs of the regime-legs decision: seeded EMAs, bars since each cross, the z-score, the candle's range."""
+        c = self.c
+        for k,n in enumerate((c.fast,c.slow)):
+            if self.count <= n:
+                self.seed[k] += bar.close
+                if self.count == n: self.ema[k] = self.seed[k]/n
+            else:
+                self.ema[k] += 2/(n+1)*(bar.close-self.ema[k])
+        fast,slow = self.ema; both = fast is not None and slow is not None
+        for k,state in enumerate((both and fast > slow, both and fast < slow)):
+            self.age[k] = (self.age[k]+1 if self.on[k] else 0) if state else 10**6
+            self.on[k] = state
+        if len(self.window) == self.window.maxlen:
+            self.total -= self.window[0]; self.squares -= self.window[0]**2
+        self.window.append(bar.close); self.total += bar.close; self.squares += bar.close**2
+        z = None
+        if len(self.window) == self.window.maxlen:
+            mean = self.total/len(self.window); deviation = math.sqrt(max(0.,self.squares/len(self.window)-mean*mean))
+            z = (bar.close-mean)/deviation if deviation > 0 else None
+        return {'ema_fast':fast,'ema_slow':slow,'age_up':self.age[0],'age_down':self.age[1],'z':z,
+                'bar_high':bar.high,'bar_low':bar.low,'ready':self.count >= max(3*c.slow,2*c.mr_window)}
 
     def update(self, bar):
         prev = self.closes[-1] if self.closes else bar.open
@@ -125,12 +168,14 @@ class Indicators:
         losses = sum(max(0,-x) for x in changes[-14:])
         rsi = 100*gains/(gains+losses) if gains+losses else 50
         momentum = p[-1]/p[-self.c.momentum-1]-1 if len(p)>self.c.momentum else 0
-        return {'ready':self.count>=max(self.c.slow,self.c.momentum+1), 'fast':self.fast,'slow':self.slow,
+        row = {'ready':self.count>=max(self.c.slow,self.c.momentum+1), 'fast':self.fast,'slow':self.slow,
                 'atr':atr,'efficiency':efficiency,'rsi':rsi,'momentum':momentum,
                 'zscore':(p[-1]-statistics.mean(recent))/sigma if sigma else 0,
                 'mean':statistics.mean(recent), 'close':bar.close,
                 'breakout_high':max(p[-self.c.breakout_high_bars:]), 'atr_24':statistics.mean(self.ranges24),
                 'volatility':statistics.pstdev([math.log(b/a) for a,b in zip(p[-73:],p[-72:])]) if len(p)>=73 else atr/bar.close}
+        if self.legs: row.update(self.legs_row(bar))
+        return row
 
 
 def entry(features, config):
