@@ -1,0 +1,109 @@
+VERIFICATION of integrate_evidence_first (independent replication, design panel only, start=744)
+================================================================================================
+Scripts and logs in this folder: v1.py/.log (standard reports + look-ahead check + order kinds), v2.py/.log (fresh windows,
+costs), v3.py/.log (legs, cash use, best coin / best month, market beta), v4.py/.log (47 neighbours), rep_C1.json,
+rep_C2.json, legs.json, neighbours.json. About 75 full-length runs plus fresh-window sets. No shared file was changed.
+Panel check: 7,519 rows, 50 pairs, no NaN, no late-listed coin (so the global 600-bar wait in the EMA leg is harmless).
+Note: the harness default is stop_slip_bps=15 (the README table still says 8). Neither candidate uses stops, so it is moot.
+
+VERDICTS
+  C1 (breakout 67% + EMA 48/200 long/short 67%)  SURVIVES, with two corrections (below). Every claimed number reproduced.
+  C2 (gated breakout alone, long only)           WEAK. Every claimed number reproduced and it is positive in every third,
+                                                 but it rests on a few trades and is idle too often for an 11-day contest.
+
+1. REPRODUCTION (evalkit.report, check=True, 40 cuts)                 claimed            reproduced
+  C1 total / max drawdown                                             +174.95% / 16.47%  +174.95% / 16.47%
+     Sharpe / Sortino / Calmar                                        2.79 / 6.73 / 16.39  2.79 / 6.73 / 16.39
+     11-day rolling mean / median                                     +4.69% / +2.52%    +4.69% / +2.52%
+     fresh 11-day (h.fresh_windows, step 3 d, n=91) mean/median/win/worst  +4.53% / +2.60% / 71.4% / -7.8%   identical
+     thirds                                                           +60.9 / +67.3 / +2.1   +60.9 / +67.3 / +2.1
+     stress total                                                     +139.17%           +139.17% (drawdown 17.7%, thirds +52 / +60 / -2)
+     trades 477; breakout +$106,776 (133), ema +$67,466 (344); long +$135,839, short +$38,403 (173)   identical
+     look-ahead check                                                 passed             passed (True, None)
+  C2 total / max drawdown                                             +162.11% / 27.51%  +162.11% / 27.51%
+     Sharpe / Sortino / Calmar                                        2.13 / 5.13 / 9.00   2.13 / 5.13 / 9.00
+     fresh 11-day mean / median / win / worst                         +4.50% / 0 / 45.1% / -13.2%   identical
+     thirds +75.8 / +33.0 / +12.0; stress +135.22%; trades 148; active days 40%                  identical
+     look-ahead check                                                 passed             passed (True, None)
+
+2. CODE READING (mix.py, candidate_1.py, candidate_2.py)
+  No look-ahead found. Every feature is built inside Mix.__init__ from the panel passed in (ATR, EMA48/200, BTC EMA480,
+  12 h return, 120 h rolling max that includes bar t). on_bar(t) reads rows <= t and Position.hi/lo, which the harness
+  updates through bar t only. Nothing is cached at module level. No whole-sample statistic.
+  No abuse of the fill model: all orders are market orders filled at the next open; there are no limits, stops or takes.
+  Sizing: each buy = equity x 0.67 x 0.99 / 4; EMA size = min(slot, 0.0067 x equity x close / (6 x ATR)). Matches the text.
+  One real inaccuracy in the description, not a bug that inflates results:
+   - The two "separate capital sleeves" add up to 134% of equity (both read the whole account's equity). The harness
+     forbids leverage, so the legs share cash. Measured in C1: gross exposure mean 44%, p90 88%, max 100.5% of equity;
+     free cash was below half a slot (entry refused) in 8.2% of hours; 14 of 134 breakout buys and 3 of 348 EMA entries
+     were cut to about 75% of size; the breakout leg made 133 trades in the mix versus 148 alone. Shorts lock their
+     collateral as cash. The live bot must reproduce this cash rule (entry only if half its size is free; exits first).
+  Small things: the "12 h lockout" blocks 11 further decision bars; the EMA "600 bars of history" test is on the bar
+  index, not per coin (same thing on this panel).
+
+3. COSTS (full run)                              C1                                   C2
+  default                                        +175.0%, 16.5%, 2.79/6.73/16.4       +162.1%, 27.5%, 2.13/5.13/9.00
+  evalkit.STRESS                                 +139.2%, 17.7%, 2.43/5.67/11.8       +135.2%, 28.4%, 1.93/4.51/7.13
+  Costs(stop_slip_bps=40)                        unchanged (no intrabar stop exists)  unchanged
+  STRESS plus 15 bp slippage on every fill       +110.6%, 18.8%, 2.11/4.77/8.63       +119.0%, 29.3%, 1.79/4.11/6.00
+     thirds under that                           +44 / +54 / -5                       +62 / +25 / +8
+  fresh 11-day windows under STRESS              mean +3.92%, median +2.17%, worst -8.5%   mean +4.02%, median 0, worst -14.3%
+  Costs are not what threatens either candidate. C1's last third turns negative under any harsher cost (-2% to -5%).
+
+4. FRAGILITY
+  Thirds (total; Sharpe / Sortino of daily returns):
+     C1            +61% (3.18 / 9.40)   +67% (4.18 / 9.45)   +2% (0.31 / 0.54)
+     C2            +76% (2.89 / 9.16)   +33% (1.96 / 3.65)   +12% (1.18 / 2.78)
+     EMA leg 100%  +24% (2.67 / 6.16)   +57% (4.61 / 10.3)   -8% (-1.08 / -1.59)
+  Fresh 11-day windows by third (mean; median): C1 +6.2 / +6.5 / +1.1% (median +4.9 / +3.8 / +1.2%);
+     C2 +7.5 / +4.4 / +1.9% (median +3.4 / 0 / 0%).
+  Without the best coin (TUT; it may not be bought, other coins can take the slot):
+     C1 +120.8%, 16.5% drawdown, 2.33 / 5.26 / 10.9, fresh mean +3.53%.   Without top 3 (TUT, ZEC, ICP): +84.5%, 1.91 / 4.29 / 7.49, fresh +2.71%.
+     C2  +87.2%, 27.9% drawdown, 1.56 / 3.44 / 4.49, fresh mean +2.92%.   Without top 3 (TUT, CFX, ZEC): +38.5%, 33.9% drawdown, 1.11 / 2.15 / 1.55,
+         thirds +30 / -9 / +18, fresh +1.69%.
+  Concentration: C1 top coin 16%, top 3 42% of net, 5 best trades 64%, 10 best 102%; 28 of 50 coins profitable.
+                 C2 top coin 35%, top 3 72% of net, 5 best trades 96%, 10 best 141%; 22 of 40 coins profitable.
+  Without the best calendar month (July 2025, chain-linked): C1 +85.2% (without the best two +39.1%); C2 +66.3% (+29.3%).
+     Months: C1 +15 +49 -5 +33 +14 +9 -7 +18 -2 -5 (6 of 10 up); C2 +20 +58 -7 +27 +4 0 -7 +29 0 -5 (5 of 10 up).
+  Neighbours (each value moved about 25%, fresh 11-day mean, n=91 restarts each):
+     C1 integration choices (wb, we, both, breakout slots, EMA slots, gate period, risk; 15 variants): 15/15 same sign,
+        fresh mean +3.80% to +4.92%, Sharpe 2.38-2.84, Sortino 4.84-6.73. Leg parameters (16 variants): 16/16 same sign,
+        fresh mean +3.60% to +5.07%, Sharpe 2.05-3.02. Share = 100% (31/31).
+        Soft spots: the EMA stop multiple (4.5 or 7.5 instead of 6 gives 2.10 / 4.76 / 7.5 and 2.05 / 4.53 / 7.3, i.e. below C2
+        on Sortino and Calmar), 3 breakout slots (2.38 / 4.84 / 11.0), fast=60, slow=250. The 6 x ATR stop is a peak in the mix.
+        Last third > 0 in 20 of 31 variants; never above C2's +12%.
+     C2 (slots, gate period 240-720, move, ATR multiple, windows, lockout; 16 variants): 16/16 same sign, fresh mean
+        +3.50% to +5.21%, totals +88% to +212%, Sharpe 1.64-2.52; last third > 0 in 16/16. Fresh MEDIAN is 0 in 15 of 16.
+  Activity in fresh 11-day windows: C1 no idle window, 2% with fewer than 6 active days, 9% with fewer than 7 (the
+     8-of-14-days rule pro rata), median 10. C2: 24% with no trade at all, 63% under 6, 71% under 7, median 5.
+
+5. IS THE MIX BETTER THAN ITS BEST LEG?
+  Whole period: yes on the ratios. C1 2.79 / 6.73 / 16.4 versus breakout alone 2.13 / 5.13 / 9.00 (at 67%: 2.09 / 4.97 / 7.16)
+  and EMA alone 2.36 / 4.71 / 8.72 (at 67%: 2.37 / 4.73 / 7.92). 94% / 77% / 90% of the 31 C1 neighbours beat C2 on
+  Sharpe / Sortino / Calmar. It is ordinary diversification: daily-return correlation of the two sleeves +0.26, and simply
+  adding the two standalone 67% sleeves gives Sharpe 2.67, Sortino 6.34.
+  Corrections to the claim:
+   a. "Beats each alone on drawdown" is wrong for the EMA leg: EMA alone has 12.9% (8.7% at 67%), the mix 16.5%.
+   b. The advantage comes entirely from the first two thirds. In the last (most recent) third the mix made +2% with
+      Sharpe 0.31 / Sortino 0.54 while the breakout alone made +12% with 1.18 / 2.78; the EMA leg lost 8% there. No C1
+      neighbour beat C2 in that third.
+   c. The fresh 11-day MEAN is the same (+4.53% vs +4.50%). What the mix buys is shape: median +2.6% vs 0, wins 71% vs 45%,
+      worst -7.8% vs -13.2%, fills on 79% vs 40% of days.
+  What the short side is: EMA shorts alone have beta -0.17 to the equal-weight market, lose 0.41% a day on up days and
+  earn 0.55% on down days; $29k of their $38k came in two falling months (Nov 2025, Feb 2026). The mean coin fell in 7 of
+  the 10 months. EMA longs lost about $21k in Jan-Mar 2026. The mix with EMA shorts only was +141%, 2.64 / 6.56 / 14.0 with
+  thirds +54 / +38 / +13: on design the long half of the EMA leg adds return in the middle third and costs it in the last.
+  No sustained rising market exists in this panel, so the short leg's cost in a rally is untested here.
+
+6. LIVE REQUIREMENTS versus the code (from the order log of the full run)
+  C1: BUY market 308, SELL market 304, SHORT market 174, COVER market 173. No limit order, no stop, no take: no position
+      ever carried a stop or target level and no order ever rested. At most 6 orders in one hour. The claim is accurate.
+      It does need SHORT/COVER and the cash rule in section 2.
+  C2: BUY market 149, SELL market 148. Nothing else. At most 4 orders in one hour. The claim is accurate.
+
+CORRECTED EXPECTATIONS
+  C1: full-period numbers stand (+175%, 16.5%, 2.79 / 6.73 / 16.4; stress +139%). A fairer reading of what to expect per
+      11 days is the last-third fresh mean of about +1% (median +1.2%, 70% of windows up), not +4.5%; without the three
+      best coins the whole-period fresh mean is +2.7%.
+  C2: full-period numbers stand (+162%, 27.5%, 2.13 / 5.13 / 9.00; stress +135%). Typical 11 days: nothing happens
+      (median 0, 24% of windows with no trade); the mean (+4.5%, last third +1.9%) is carried by a few coins.

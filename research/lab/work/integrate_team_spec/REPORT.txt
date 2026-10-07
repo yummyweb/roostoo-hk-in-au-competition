@@ -1,0 +1,134 @@
+INTEGRATION TRACK integrate_team_spec - the team's architecture, built and measured
+Design data only (harness.load('design'), rows 744+, 282 days, default costs unless "stress"). About 75 backtested
+variants (15 of them placebo labelings, 5 benchmarks/references) plus 17 fresh-start window runs.
+
+VERDICT
+The architecture as specified (K-Means regime -> EMA crossover in "trend", z-score mean reversion in "chop") does not
+work, and the reason is structural, not a matter of tuning:
+  - An EMA crossover happens when the trend is weakest. At the hour EMA48 crosses EMA200 the K-Means label says
+    "trend" for only 19% of up-crosses and 8% of down-crosses. The switch therefore blocks 80-90% of the leg's entries.
+  - A 168 h z-score of -3 is a strong directional fall. At those hours the label says "chop" only 14% of the time.
+    The switch blocks 86% of the mean-reversion entries and keeps the worse ones.
+  - The label carries no information for this map: swapping the map (EMA in "chop", mean reversion in "trend") earned
+    +115%, the specified map -5.5%, and giving each coin another coin's label path did as well as the real labels.
+The two legs themselves, run side by side with separate budgets and no switch, are the best form of the team's idea:
++85% on design with an 11% drawdown (hourly-close stops), better ratios than the tuned breakout, positive in 69% of
+fresh-start 11-day windows. The BTC "long when good, short when bad" gate also subtracts (+95% -> +37% on the EMA leg);
+the crossover already goes long on up-crosses and short on down-crosses per coin, which is the same intent done better.
+
+FILES
+  ts.py            the strategy class (TeamSpec), walk-forward K-Means labels, threshold/placebo labels, BTC gate, build()
+  candidate_1.py   A: faithful version (K-Means switch). Not recommended. Look-ahead check: pass, 40 cuts.
+  candidate_2.py   B: both legs, no switch, hourly-close stops. Recommended of the two. Look-ahead check: pass, 40 cuts.
+  s1..s5 scripts, s1/s2/s3_results.jsonl (every variant, evalkit.report dicts), report_candidate_<n>.json, s4_fresh.log
+
+LEG SETTINGS (taken from the first round, not re-tuned)
+  EMA leg: EMA 48/200, entry within 3 bars of the cross, 6 x ATR(24) trailing stop, exit on the opposite cross, at most
+           4 positions, size = min(24.75% of equity, 1% of equity / stop distance). Reproduces ema_risk/candidate_1
+           order for order (+94.7% under the current harness; the +101% quoted earlier was before the stop-overshoot change).
+  MR leg : 168 h z <= -3.0, long only, market entry, sell at first close with z >= 0 or after 48 h, 20% disaster stop,
+           at most 10 positions, 12 h cooldown. Market-only (no scale-in limit, no resting sale): +15.3% at 10 x 9.9%,
+           the same as z_risk/candidate_2 (+15.2%), so the resting orders are not needed.
+NEW CHOICES MADE HERE (each stated, few)
+  1. Capital split: EMA leg keeps its risk sizing (about 12.5% of equity a position, 4 positions); MR positions are 5%
+     of equity each, at most 10. Tried 2.5 / 5 / 7.5 / 9.9%: +99 / +110 / +102 / +110% (intrabar stops). Flat: not a tuned value.
+  2. K-Means: K=2, the 'core4' trend/chop features of the regime_trendchop track, first fit on 456 h so labels exist
+     from row 723, refit every 336 h on all past data. Agrees 99.8% with regime.walk_forward(use_hmm=False).
+  3. A only: entry allowed up to 12 bars after the cross (3 / 12 / 24 tried: -5.5 / +23.4 / +20.9%). 12 is the best of
+     three, so expect less. Needed because the label lags the cross.
+  4. B only: stops judged on the hourly close instead of inside the hour (less live code). One continuous run: +85%
+     against +110%; fresh 11-day windows: mean +2.79% / median +2.24% against +2.68% / +1.88%. No real difference.
+
+MAIN TABLE (design, start 744)
+                                          total  maxDD  Sortino Sharpe Calmar  11d mean/median  thirds          stress  trades  P&L by leg
+ A  candidate_1: K-Means switch, fresh 12 +23.4% 20.2%   1.88   1.04   1.55   +1.24% / -0.39%  -2 / +42 / -11  +10.4%   408   ema +34.8k (long +33.5k, short +1.4k), mr -10.5k
+    A's EMA leg alone (trend only)        +46.7% 19.4%   3.22   1.63   3.32   +2.02% / +0.12%  -3 / +64 / -8   +33.1%   281   ema +47.8k
+    A's MR leg alone (chop only)           -6.6% 12.2%  -0.69  -0.57  -0.69   -0.26% /  0.00%  +3 / -6 / -3     -8.1%   137   mr -6.6k
+    strict version (fresh 3)               -5.5% 15.4%  -0.24  -0.15  -0.46   +0.03% / -0.57%  -4 / +3 / -5    -12.9%   325   ema +2.4k, mr -7.3k
+    A with plain threshold instead of KM  +41.5% 14.3%   2.77   1.50   3.98   +1.71% / +0.92%  -6 / +55 / -3   +23.8%   468   ema +40.7k, mr -1.1k
+    A with placebo labels (5 coin shuffles) -5 / +6 / +51 / +6 / +58%, mean +23%  (real label: +23.4%)
+    A, labels 1,000 bars late (rows 1750+)  +23.5% against +19.4% for the real labels on the same rows
+    swapped map (EMA in chop, MR in trend) +115.3% 12.8%  6.51   3.23  13.22   +3.27% / +2.64%  +29 / +61 / +4  +85.1%   602   ema +101.5k, mr +11.5k
+ B  candidate_2: both legs, no switch,
+    hourly-close stops                    +84.8% 11.0%   5.12   2.57  11.00   +2.74% / +1.44%  +32 / +47 / -5  +58.7%   613   ema +78.7k (long +38.1k, short +40.7k), mr +4.7k
+    B's EMA leg alone                     +79.3% 13.2%   4.71   2.35   8.53   +2.69% / +1.60%  +24 / +57 / -8  +59.1%   352   ema +78.0k
+    B's MR leg alone (10 x 5%)             +8.8% 10.3%   1.13   0.76   1.12   +0.28% / +0.14%  +10 / -5 / +4    +4.8%   289   mr +8.8k
+    B with intrabar stops                +110.3% 13.5%   6.04   2.93  11.96   +3.22% / +2.11%  +31 / +52 / +5  +78.9%   647   ema +92.5k, mr +15.5k
+    B + BTC 480 h direction rule          +21.5% 18.3%   1.68   0.93   1.56   +0.97% / +0.71%  +10 / +14 / -4   +7.6%   376   ema +31.2k, mr -10.6k
+    EMA leg + direction rule (no MR)      +36.7% 16.8%   2.68   1.43   2.96   +1.44% / +1.27%  +12 / +23 / -1  +22.0%   310
+    EMA leg, direction rule reversed      +25.5% 13.5%   2.22   1.23   2.53   +1.12% / +0.46%  +3 / +21 / 0    +14.1%   279
+    B without shorts (long only)          +31.7% 25.1%   1.93   1.10   1.71   +1.25% / -0.16%  +24 / +19 / -11 +14.9%   567
+ Benchmarks
+    breakout_params/candidate_1          +183.1% 32.6%   4.74   1.92   8.72   +5.22% / +0.98%  +83 / +63 / -5  +141.6%  234
+    baselines.Breakout (live v2)          +40.3% 43.4%   1.91   0.96   1.27   +2.11% / -0.61%  +12 / +61 / -23   +4.2%  449
+ (the direction-rule and long-only rows use intrabar stops)
+
+FRESH-START 11-DAY WINDOWS (91 windows, every 3 days, flat start; this is the closest thing to the 11 days left)
+                                     mean    median  win   worst   best    >=+10%  <=-5%  worst drawdown
+ A candidate_1                      +1.06%  -0.21%   48%  -10.9%  +18.0%    9%     13%     13.3%      (stress: +0.62% / -0.64%)
+ A EMA leg alone / MR leg alone     +1.87% / -0.30% mean, +0.15% / 0.00% median
+ A with placebo labels (2 shuffles) +0.14% and +1.34% mean
+ strict version (fresh 3)           -0.03%  -0.81%   42%   -8.7%  +12.9%    1%     11%     10.8%
+ B candidate_2 (hourly-close stops) +2.79%  +2.24%   69%   -8.5%  +29.0%   12%      8%     10.1%      (stress: +2.14% / +1.55%, win 66%)
+ B with intrabar stops              +2.68%  +1.88%   69%   -8.3%  +25.5%   10%      8%      9.4%
+ B's EMA leg alone (close stops)    +2.58%  +2.37%   67%  -11.5%  +29.0%   11%      8%     13.0%
+ MR leg alone (10 x 5%)             +0.19%  +0.10%   55%   -4.8%   +4.9%    0%      0%      7.9%
+ B + BTC direction rule             +1.06%  +0.34%   53%   -8.1%  +19.5%    3%     11%     10.1%
+ B without shorts                   +1.02%  -0.32%   45%   -9.6%  +23.8%   10%     14%     13.3%
+ breakout_params/candidate_1        +5.44%  +1.59%   53%  -15.9%  +48.3%   33%     24%     21.2%      (stress: +4.76% / +0.94%)
+
+WHAT EACH PART ADDS OR SUBTRACTS
+  K-Means regime switch : subtracts. EMA+MR without it +110% (intrabar stops); with it -5.5% (strict) or +23% (12-bar
+                          entry window). No better than shuffled or delayed labels. A plain threshold (|EMA24-EMA100|/ATR
+                          > 1.25) does a little better than K-Means (+41% against +23%) and is still far below no switch.
+                          One real but small effect, already known: EMA LONGS taken 6-24 h after the cross in the "trend"
+                          state (A's long side +33.5k; delayed labels: +14% against +45% for the EMA leg, rows 1750+).
+  Mean-reversion leg    : in the "chop" state it loses (-6.6k alone, -10.5k inside A). Unswitched and small it adds +5 points
+                          at default costs and nothing at stress costs (+58.7% with, +59.1% without). What it does give:
+                          drawdown 13.2% -> 11.0%, worst fresh window -11.5% -> -8.5%, days with a fill 70% -> 82%, and a
+                          daily-return correlation of -0.35 with the EMA leg. It is a stabiliser, not a profit source.
+                          All of its profit came in bad markets; restricted to good markets it lost 6.6k.
+  BTC direction rule    : subtracts 58 points from the EMA leg (+95% -> +37%); the reversed rule made +25%, so the rule
+                          just throws away half the trades. Do not add it to this design. (It did help the breakout
+                          longs in round one; that is a different strategy.)
+  Shorts                : half of B's profit (+40.7k of +83.5k). Long-only B is +32% with a 25% drawdown and a negative
+                          median fresh window: without shorts B is not worth deploying.
+
+CORRELATIONS OF DAILY RETURNS
+  EMA leg with MR leg -0.35 (B), -0.33 (A).  EMA long book with EMA short book -0.37.
+  B with tuned breakout +0.41; B's EMA leg +0.33; MR leg +0.16.  A with B +0.69.
+
+OTHER NUMBERS, B / A
+  Win rate 44% / 37%; turnover 198x / 109x; fees $19.8k / $10.9k; average hold 56 h / 52 h; days with a fill 82% / 80%;
+  14-day windows with >= 8 active days 100% / 94%; 11-day windows: median 9 active days, minimum 6 / 3.
+  Most orders in one hour 12 / 10. 30-day blocks positive 6 of 10 / 5 of 10
+  (B: +4, +29, -2, +27, +5, +8, -1, -2, +5, -5%).  Pairs profitable 24 of 50 / 21 of 50.
+  P&L without the three best pairs: B +$22.9k of +$83.5k (XLM, WLD, ICP); A -$1.2k of +$24.3k (ICP, WLD, FLOKI).
+  B exits: 613 by hourly signal (cross-back, close through the trailing level, z >= 0, time limit); no intrabar exits.
+  B had 63 rejected orders: buys with no free cash when both legs were full (4 x up to 24.75% + 10 x 5% can exceed 100%).
+
+CAVEATS
+  1. B is the first-round EMA leg plus a small stabiliser. It adds no new evidence for that leg; it inherits its risks.
+  2. The EMA leg is sensitive to the entry window: entry within 1 / 2 / 3 / 4 / 6 / 12 / 24 bars of the cross gives
+     +89 / +93 / +95 / +77 / +50 / +40 / +17%. The live bot must act in the first three hourly bars after a cross; a bot
+     that is down for a few hours misses the trade and must not chase it.
+  3. Long-only made +25% and short-only +30% but both together +95%: about a third of the result comes from which
+     signals win one of the four slots, not from the signals. Treat +85% as an upper estimate.
+  4. The design period was a bear market (average coin -45%). The short side may be riding it. Two 30-day blocks carry
+     most of B's profit and the last third is -5% (close stops) / +5% (intrabar stops).
+  5. Against the tuned breakout, B has a lower mean (fresh windows +2.8% against +5.4%) and far fewer +10% windows
+     (12% against 33%), but a higher median (+2.2% against +1.6%), a higher win rate (69% against 53%), a third of the
+     <= -5% windows (8% against 24%) and better Sortino/Sharpe/Calmar. Which matters depends on whether the team needs
+     to climb into the top 20 on return (breakout) or protect ratios (B).
+  6. Hourly-close stops leave a short exposed to a one-hour squeeze. A position is at most 24.75% of equity, so a +30%
+     hour would cost up to 7.4% of equity. This did not happen often enough on design to show, but it can.
+  7. Nothing here was run on the selection or holdout data.
+
+LIVE REQUIREMENTS
+  B (candidate_2): hourly decisions from completed candles and MARKET orders only (both exist today). No intrabar stops,
+     no resting limits. NEW code: open and close 1x shorts by market order (untested against the real exchange).
+     Data: 600 completed hourly candles for each of the 50 pairs before the first decision (EMA200 warm-up, ATR24,
+     168 h mean and standard deviation). Up to 14 positions and up to 12 orders in one hour: queue them one per minute.
+  A (candidate_1): everything B needs, plus intrabar stops from the one-minute poll (as frozen; with hourly-close stops
+     it made +28%), plus a K-Means pipeline: four features per coin-hour, at least 720 h of history for all 50 pairs,
+     refit every 336 h, scikit-learn on the trading host. More new code for a worse result.

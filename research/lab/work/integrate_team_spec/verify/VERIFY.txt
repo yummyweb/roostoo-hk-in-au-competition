@@ -1,0 +1,116 @@
+VERIFICATION of integrate_team_spec (independent replication and attack)
+Design panel only (harness.load('design'), start 744, default Costs() unless stated). Scripts and raw output: verify/v1.py .. v6.py,
+fw.py, vcommon.py, v1.json. About 110 full backtests and 75 fresh-window runs. Nothing outside verify/ was changed.
+Note: harness.Costs() default stop_slip_bps is 15 in the code (README says 8); all numbers below use the code's default.
+
+VERDICT
+  B (candidate_2, EMA 48/200 + z-score legs, no switch, hourly-close stops)   SURVIVES, with the headline cut down (see "corrected").
+  A (candidate_1, K-Means switch)                                             REFUTED as something to trade. The author's own
+                                                                              numbers and "not recommended" label are accurate.
+
+1. REPRODUCTION (evalkit.report, check=True)
+                         total   maxDD  Sharpe Sortino Calmar  11d mean/med   thirds           stress   trades  look-ahead
+  B claimed              +84.8%  11.0%  2.57   5.12    11.0    +2.74/+1.44%   +32/+47/-5       +58.7%   613     pass
+  B reproduced           +84.8%  11.0%  2.57   5.12    11.0    +2.74/+1.44%   +31.8/+47.0/-4.6 +58.7%   613     pass, 40 cuts
+  A claimed              +23.4%  20.2%  1.04   1.88    1.55    +1.24/-0.39%   -2/+42/-11       +10.4%   408     pass
+  A reproduced           +23.4%  20.2%  1.04   1.88    1.55    +1.24/-0.39%   -2.0/+41.9/-11.3 +10.4%   408     pass, 40 cuts (and 8 cuts)
+  Fresh 11-day windows (91, every 3 days): B +2.79% / +2.24% / win 69% / worst -8.5% (harness function and my own agree);
+  A +1.06% / -0.21% / win 48% / worst -10.9%. P&L by leg and side reproduce to the dollar. A's make() takes 3.6 s uncached.
+  Also reproduced: strict A -5.5%, swapped map +115.3%, placebo shuffles -4.6/+5.9/+50.6/+5.5/+57.8% (mean +23%), delayed
+  labels +23.5%, threshold +41.5%, label says trend at 18.9% of up-crosses and 8.3% of down-crosses, chop at 14% of z<=-3.
+  One number does not reproduce: "B's MR leg alone +8.8%" is the intrabar-stop figure. With B's own hourly-close stops the
+  MR leg alone is +5.9% (max drawdown 12.7%, Sortino 0.72; stress +2.0%).
+
+2. CODE READING (ts.py, candidate_1.py, candidate_2.py)
+  No look-ahead found. All indicators come from ind.* on the panel passed to make; on_bar reads row t only; the K-Means
+  model for rows [end, end+336) is fitted and standardised on rows < end; refit schedule is anchored to the panel, not
+  to the start bar. The module-level _MEMO cache is keyed on panel identity, so an altered panel is always refitted.
+  No fill-model abuse: B sends market orders only. Sizing uses equity once per order; the two budgets can add up to
+  149% of equity but buys are capped by free cash (63 rejected or shrunk orders in B, 9 in A), so there is no leverage.
+  Exits are listed before entries, so cash freed by a sale funds the same hour's buys (a live bot must send in that order).
+  Small defects, none material:
+   - Both legs write to one cooldown dict, so a mean-reversion exit also blocks the EMA leg on that coin for 12 bars
+     (and an EMA cross-exit blocks the MR leg for 6). With separate dicts B is +83.7% (was +84.8%).
+   - A mean-reversion holding blocks an EMA entry in that coin (one position per coin) and the 3-bar window then
+     expires. Stated in the description; effect not separable from the MR leg's contribution.
+   - Start-bar dependence is small: starting at 744/756/768/792/840/912 gives +82% to +85%.
+
+3. COSTS
+                                  B total (maxDD)      A total (maxDD)
+  default                         +84.8% (11.0%)       +23.4% (20.2%)
+  stop overshoot 40 bp            +84.8% (no stops)    +12.3% (23.5%)
+  evalkit.STRESS                  +58.7% (15.3%)       +10.4% (24.2%)
+  STRESS + stop overshoot 40 bp   +58.7%               +0.4%  (27.3%)
+  slippage 10 bp / 20 bp per fill +70.9% / +50.0%      +15.0% / +5.3%
+  STRESS + 20 bp slippage         +33.5% (22.0%)       -12.0% (31.6%)
+  every decision one hour late    +20.9% (16.4%), stress +3.7%; fresh windows +1.65% / +1.37%, win 62%
+  B is immune to stop overshoot because it has no intrabar stops. Its weak point is timing: the backtest fills all of an
+  hour's orders (up to 12) at the open. Acting one full hour late removes three quarters of the profit, so a large part
+  of the edge sits in the first hour after the signal. One order per minute means the 12th order is 12 minutes late;
+  the 20 bp slippage row is the fairer estimate for that than the default.
+
+4. FRAGILITY
+  Thirds: B +31.8 / +47.0 / -4.6% (stress +25 / +40 / -10%). A -2.0 / +41.9 / -11.3%.
+  B's EMA longs lost $21.7k in the last third; EMA shorts made +$3.2k / +$33.4k / +$4.1k; MR +$9.6k / -$12.0k / +$7.1k.
+  Fresh windows by third of start date, B: mean +3.9 / +4.1 / +0.4%, median +1.8 / +2.3 / +2.3%.
+  A: mean +0.2 / +3.7 / -0.7%, median -0.9 / +2.8 / -0.9%.
+  Without the best coin (panel rebuilt without it): B without XLM +56.5% (stress +34.3%), fresh +2.37% / +2.18%.
+     A without ICP +13.2% (stress +1.3%), fresh +0.71% / -0.72%.
+  Without the three best coins: B +22.1% (fresh +1.53% / +1.19%). A -6.6%.
+  Without the best calendar month (Sep 2025 for both): B +43.4%; without the best two +12.5%; 6 of 10 months positive.
+     A -4.1%; without the best two -11.6%; 4 of 10 months positive.
+  Concentration in B: three long trend trades (WLD +$25.4k, XLM +$21.0k, ICP +$13.7k) are $60k of the $83.5k total.
+  Integration choices moved +-25% (B; full run / fresh mean / fresh median):
+     ema_slots 3, 5      +69%, +80%   / +1.78, +3.18% / +1.50, +2.38%
+     risk .0075, .0125   +72%, +86%   / +2.20, +3.14% / +1.72, +2.56%
+     mr_slots 8, 12      +85%, +80%   / +2.75, +2.84% / +2.24, +2.09%
+     mr_frac 3.75, 6.25% +89%, +71%   / +2.75, +2.76% / +2.28, +2.08%
+     entry window 2, 4   +88%, +94%   / +2.87, +2.34% / +2.35, +1.59%
+     10 of 10 keep a positive fresh mean and median. Stress totals +46% to +64%.
+  Leg parameters moved +-25% (B; full run, then fresh mean at 6-day steps where the baseline is +3.44%):
+     fast 36, 60 +84%, +22% | slow 150, 250 +58%, +48% | stop 4.5, 7.5 ATR +52%, +49% | ATR 18, 30 +77%, +39% |
+     entry window 5, 6 +42%, +45%.  Fresh means +1.9% to +3.4%, medians +1.0% to +2.5%, 10 of 10 positive.
+     The frozen setting is the best point of its neighbourhood for the continuous run: the neighbours' median is about
+     +50% (stress about +30%, lowest +4.5% at fast=60). The fresh-window result is much flatter than the continuous
+     total, so the +85% depends on which trades happen to hold the four slots; the per-window edge does not.
+  Integration choices moved +-25% (A): entry window 9, 15 -> +8.0% (stress -2.7%), +36.8%; K-Means refit 252, 420 h ->
+     +22.8%, +18.9%; first fit 342, 570 h -> +20.8%, +25.0%; ema_slots, risk, mr_slots, mr_frac -> +15% to +36%.
+     Fresh mean positive in 14 of 14 (+0.5% to +1.6%); fresh median positive in only 2 of 14.
+  Non-overlapping 11-day fresh windows (three offsets, n = 24-25): B mean +2.2 to +3.1%, win 62-68%, t = 1.9 to 2.3.
+     A mean +0.6 to +1.5%, win 40-48%, t = 0.5 to 1.2.
+  History length: B run with only the 600 candles before each window: +2.56% / +2.28% (full history, same starts:
+     +2.41% / +2.00%). The 600-candle requirement holds.
+
+5. COMBINATION AGAINST ITS BEST LEG
+  B                      total   maxDD  Sharpe Sortino Calmar  stress total (maxDD, Sortino)   fresh mean / median / worst
+   both legs             +84.8%  11.0%  2.57   5.12    11.0    +58.7% (15.3%, 3.75)            +2.79% / +2.24% / -8.5%
+   EMA leg alone         +79.3%  13.2%  2.35   4.71    8.5     +59.1% (17.2%, 3.67)            +2.58% / +2.37% / -11.5%
+   MR leg alone          +5.9%   12.7%  0.52   0.72    0.6     +2.0%  (14.6%, 0.32)            (not rerun)
+   EMA long only +39% (maxDD 27%), EMA short only +34% (maxDD 14%).
+  B is the EMA leg plus a small stabiliser: slightly better ratios and drawdown, the same return after stress costs.
+  It is not a dilution, and not a second source of profit either. The claim as written is accurate.
+  A                      total   maxDD  Sharpe Sortino Calmar  stress   fresh mean / median
+   both legs             +23.4%  20.2%  1.04   1.88    1.55    +10.4%   +1.06% / -0.21%
+   EMA leg alone         +46.7%  19.4%  1.63   3.22    3.32    +33.1%   +1.87% / +0.15%
+   MR leg alone          -6.6%   12.2%  -0.57  -0.69   -0.69   -8.1%
+  A is worse than its own EMA leg on every measure: the combination subtracts.
+
+6. LIVE REQUIREMENTS AGAINST THE CODE
+  B order log: BUY market 507, SELL market 440, SHORT market 173, COVER market 173. No limit orders, no Order.stop,
+  no set_stop, no take levels, no resting orders at any bar; all 613 exits have reason 'signal'. Up to 14 positions and
+  12 orders in one hour. The claim is correct. Missing from it:
+   - buys must be capped by free cash and exits sent before entries (63 capped or rejected buys on design);
+   - the backtest locks the full collateral of a short and gives no use of the sale proceeds; if the exchange differs,
+     capital usage differs;
+   - orders must go out in the first minutes of the hour (see section 3);
+   - shorts carry 49% of the profit and their open/close code is new and untested (stated by the author).
+  A order log: BUY market with stop 292, SHORT market with stop 128, SELL market 129; 279 of 408 exits are intrabar
+  stops (Position.stop / set_stop every bar). No limits, no takes. The claim is correct.
+
+CORRECTED NUMBERS TO CARRY FORWARD
+  B: design +84.8% is reproduced but is the top of its neighbourhood and rests on three trades. Plan on roughly +50% on
+     design (neighbour median), +34% to +59% after stress costs, +43% without the best month, +56% without the best coin,
+     -5% in the last third. For an 11-day window: mean about +2% to +2.8%, median about +1.5% to +2.2%, positive in
+     62-69% of windows, worst about -9% to -10%; +1.65% / +1.37% if every decision were an hour late.
+  A: +23.4% reproduced; +0.4% under stress with 40 bp stop overshoot, -4.1% without the best month, -6.6% without
+     three coins, median fresh window negative in 12 of 14 neighbours, no better than shuffled labels. Do not trade it.

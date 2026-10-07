@@ -31,7 +31,18 @@ Retired from active exploration:
   or more standard deviations below their own rolling mean lost on average in
   every tested window, stop and filter variant; shorting the mirror image lost
   more.
-- Donchian breakout variants: low turnover and sometimes positive under stress,
+- EMA crossover, z-score mean reversion and a K-Means regime switch between
+  them (October 7 study, `research/README.md`): the 9/21/55 crossover lost
+  77-89% on hourly candles; a slow 48/200 long+short version made +95% on the
+  design period and then lost in all three held-back periods; no z-score
+  setting was positive after stress costs on the design period and the
+  least-bad one lost in three of four periods; the regime switch added nothing
+  over a placebo label. Shorting when the market is weak, a Bitcoin trend gate
+  on entries, a standing Bitcoin hedge and maker-only execution were tested in
+  the same study and are not used.
+- Earlier Donchian channel breakout variants (before October 6; the
+  momentum-gated breakout now live is a different rule, see the last
+  paragraph): low turnover and sometimes positive under stress,
   but they still lost in broad chronological blocks. A breakout exception in
   BEAR/CHOP was especially poor and remains retired.
 
@@ -63,8 +74,9 @@ low-turnover pipeline:
 The headless runner briefly ran a short-window version of this regime logic
 (October 5-6). In an hourly replay it flipped regime several times a day and
 its fees exceeded its gross edge, so it is retired. The runner now trades a
-four-slot breakout rotation with trailing stops, a deliberate high-variance
-choice for the return screen; the strength-gated trend ensemble with a gradual
+four-slot breakout rotation with ATR trailing stops, the only family that was
+positive in every held-back period of the October 7 study and a deliberate
+high-variance choice for the return screen; the strength-gated trend ensemble with a gradual
 drawdown brake remains the supported lower-risk preset. Any promotion
 requires a frozen paper period, current Roostoo quotes, and reconciliation of
 the exact account and pair rules.

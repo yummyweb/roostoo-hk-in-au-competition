@@ -48,6 +48,10 @@ class Config:
     # equity falls this far below its rolling peak. 0 keeps the latching halt.
     drawdown_brake: float = 0.0
     brake_window_bars: int = 168
+    # Breakout rotation: the entry must close within 0.1% of the highest close of this many bars.
+    breakout_high_bars: int = 72
+    # Trailing exit as a multiple of the 24-bar average true range; 0 uses the fixed take_profit_trail fraction.
+    trail_atr: float = 0.0
 
     def validate(self):
         if self.strategy not in ('trend','hybrid','rotation','pullback','reversion','allocation','lstm_prediction','cross_asset','buy_hold','cash'):
@@ -66,6 +70,9 @@ class Config:
             raise ValueError('Invalid trailing profit-taking configuration')
         if not 0 <= self.drawdown_brake < 1 or type(self.brake_window_bars) is not int or not 1 <= self.brake_window_bars <= 1000:
             raise ValueError('Invalid drawdown brake configuration')
+        # trail_atr counts whole ATRs; a fraction such as 0.06 is a take_profit_trail value typed in the wrong field.
+        if type(self.breakout_high_bars) is not int or not 2 <= self.breakout_high_bars <= 720 or not (self.trail_atr == 0 or 1 <= self.trail_atr <= 20):
+            raise ValueError('Invalid breakout window or ATR trail')
         if not 2 <= self.fast < self.slow <= 1000 or not 2 <= self.momentum <= 1000:
             raise ValueError('Require 2 <= fast < slow <= 1000 and a valid momentum window')
         if any(not math.isfinite(v) for v in asdict(self).values() if isinstance(v, (float,int))):
@@ -93,14 +100,16 @@ class Config:
 class Indicators:
     def __init__(self, config):
         self.c = config
-        self.closes = deque(maxlen=max(config.slow,config.momentum,72)+2)
+        self.closes = deque(maxlen=max(config.slow,config.momentum,72,config.breakout_high_bars)+2)
         self.ranges = deque(maxlen=14)
+        self.ranges24 = deque(maxlen=24)
         self.fast = self.slow = None
         self.count = 0
 
     def update(self, bar):
         prev = self.closes[-1] if self.closes else bar.open
         self.ranges.append(max(bar.high-bar.low,abs(bar.high-prev),abs(bar.low-prev)))
+        self.ranges24.append(self.ranges[-1])
         self.closes.append(bar.close)
         self.fast = bar.close if self.fast is None else self.fast + 2/(self.c.fast+1)*(bar.close-self.fast)
         self.slow = bar.close if self.slow is None else self.slow + 2/(self.c.slow+1)*(bar.close-self.slow)
@@ -119,7 +128,8 @@ class Indicators:
         return {'ready':self.count>=max(self.c.slow,self.c.momentum+1), 'fast':self.fast,'slow':self.slow,
                 'atr':atr,'efficiency':efficiency,'rsi':rsi,'momentum':momentum,
                 'zscore':(p[-1]-statistics.mean(recent))/sigma if sigma else 0,
-                'mean':statistics.mean(recent), 'close':bar.close, 'high_72':max(p[-72:]),
+                'mean':statistics.mean(recent), 'close':bar.close,
+                'breakout_high':max(p[-self.c.breakout_high_bars:]), 'atr_24':statistics.mean(self.ranges24),
                 'volatility':statistics.pstdev([math.log(b/a) for a,b in zip(p[-73:],p[-72:])]) if len(p)>=73 else atr/bar.close}
 
 

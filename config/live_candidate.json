@@ -3,7 +3,7 @@
   "initial_cash": 100000.0,
   "fast": 16,
   "slow": 64,
-  "momentum": 24,
+  "momentum": 12,
   "risk_per_trade": 0.005,
   "max_position": 0.25,
   "max_exposure": 0.99,
@@ -28,5 +28,7 @@
   "take_profit_trail": 0.06,
   "take_profit_fraction": 0.0,
   "drawdown_brake": 0.0,
-  "brake_window_bars": 168
+  "brake_window_bars": 168,
+  "breakout_high_bars": 120,
+  "trail_atr": 4.0
 }

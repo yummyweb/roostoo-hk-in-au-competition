@@ -51,8 +51,8 @@ other AWS services or launch another instance.
 Use `ROOSTOO_UNIVERSE_CONFIG=/opt/roostoo/config/universe-50.json` for the fixed
 50-pair execution universe. The default `config/live_candidate.json` now runs
 the long-only breakout rotation: four equal slots, hourly entries on an 8%
-24-hour move at a 72-hour high, a 6% trailing stop on hourly closes, and a
-12-hour re-entry lock. It warms Binance hourly candles per pair as a proxy and
+12-hour move at a 120-hour high, a 4 x ATR(24h) trailing stop on hourly closes,
+and a 12-hour re-entry lock. It warms Binance hourly candles per pair as a proxy and
 trades current Roostoo quotes, so verify the pair list and wallet before any
 live activation.
 
@@ -78,7 +78,7 @@ sudo systemctl show roostoo-bot -p ExecStart -p ActiveState -p SubState
   switch, follow the transition procedure below.
 - `"mode": "live"` with `"pending": null` can be an intentional wait. Slots are
   decided once per hour; the runner trades only when a pair breaks out into a
-  free slot or a holding closes below its trailing stop.
+  free slot or a holding closes at or below its trailing stop.
 - `Cycle blocked:` or a startup traceback identifies an execution/data error.
   Missing credentials, a starting cash mismatch, stale candles/quotes, and
   unresolved orders prevent trading. The live starting wallet must be flat and

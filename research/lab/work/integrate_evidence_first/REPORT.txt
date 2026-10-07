@@ -1,0 +1,136 @@
+INTEGRATION REPORT - angle "evidence_first"
+============================================
+Data: harness.load('design') only (7,519 hourly rows, 50 pairs, start=744, a bear market: BTC -32%). No other panel was loaded.
+Evaluations: 86 full-length reports (about 78 distinct settings), all in this folder's logs (s1_legs.log, s2_mix.log,
+s3_refine.log, s3b_z.log, s4_final.log, s5_extra.log, results.jsonl, final_*.json). No leg parameter was re-tuned.
+
+ANSWER IN ONE PARAGRAPH
+Run the two parts that survived side by side, each in its own capital sleeve: tuned breakout longs behind the BTC>EMA480
+gate, and the EMA 48/200 long+short crossover with a 6 x ATR trail sized by risk. On design the mix made +175% with a 16.5%
+drawdown (Sharpe 2.79, Sortino 6.73, Calmar 16.4), against +162% / 27.5% (2.13 / 5.13 / 9.00) for the breakout alone and
++79% / 12.9% (2.36 / 4.71 / 8.72) for the EMA leg alone: better than either leg on all three ratios. It needs no intrabar
+stops and no limit orders, but it does need short open/close. The best long-only version is the gated breakout alone;
+nothing long-only that was added to it improved it. The K-Means regime filter, the z-score leg, the BTC gate on the EMA leg,
+shared slots and a portfolio drawdown brake are all left out because each one failed to add anything.
+
+LEGS ALONE (my re-implementation reproduces round one order for order: breakout +183.1%, EMA +94.75% under today's harness;
+round one's +100.9% for the EMA leg was with the old 8 bp stop overshoot, now 15 bp)
+                                          total   maxDD  Sharpe Sortino Calmar  thirds            stress   active days
+breakout tuned, no gate                  +183.1%  32.6%   1.92   4.74    8.72   +83 / +63 /  -5   +141.6%   65%
+breakout tuned + BTC>EMA480 gate (= C2)  +162.1%  27.5%   2.13   5.13    9.00   +76 / +33 / +12   +135.2%   40%
+EMA 48/200 L+S, intrabar stop             +94.8%  15.3%   2.52   5.28    8.92   +22 / +56 /  +2    +71.0%   71%
+EMA 48/200 L+S, hourly-close stop         +79.4%  12.9%   2.36   4.71    8.72   +24 / +57 /  -8    +59.4%   69%
+EMA 24/200 L+S, hourly-close stop         +38.4%  19.7%   1.33   2.52    2.65   +19 / +32 / -12    +20.3%   77%
+EMA 48/200 long only, close stop          +39.5%  27.2%   1.40   2.77    1.98   +23 / +33 / -15    +27.2%   71%
+EMA 48/200 short only, close stop         +34.3%  13.6%   1.60   2.91    3.42    +5 / +21 /  +6    +23.1%   67%
+EMA 48/200 L+S steered by the BTC gate    +27.3%  16.5%   1.13   2.01    2.22   +13 / +20 /  -6    +14.1%   70%
+z-score sleeve (168 h, z<=-3), limits     +15.2%  17.4%   0.78   1.17    1.16   +15 /  -7 /  +8     +5.0%   51%
+z-score sleeve, hourly market orders only  +7.4%  26.3%   0.45   0.60    0.37   +21 / -17 /  +6     -0.2%   47%
+benchmark baselines.Breakout (live rule)  +40.3%  43.4%   0.96   1.91    1.27   +12 / +61 / -23     +4.2%   80%
+
+Correlation of daily returns, legs run alone: breakout+gate vs EMA L+S = +0.26 (by third +0.37 / +0.17 / +0.23);
+breakout vs EMA longs +0.38; breakout vs EMA shorts -0.14; EMA longs vs EMA shorts -0.37; breakout vs z sleeve +0.13.
+The legs do not rescue each other on bad days (on the 23 days the breakout leg lost more than 2% the EMA leg averaged
+-0.3%); the gain from mixing is ordinary diversification of two weakly correlated positive streams, not a hedge.
+
+DECISIONS (each is one choice; alternatives tried are listed)
+1. Separate sleeves, not shared slots. Shared slots gave +115% / 22.5% (4), +156% / 18.2% (6), +140% / 22.2% (8): not
+   monotonic, and EMA positions crowd out breakout entries (44-93 breakout trades instead of about 139).
+2. Split 1:1 between breakout and EMA. Sleeves at 100% total (EMA risk per trade = 1% of its sleeve):
+     100/0  +162.1%  27.5%  2.13 / 5.13 /  9.00   thirds +76 / +33 / +12
+      70/30 +136.9%  16.3%  2.48 / 6.19 / 12.60          +51 / +40 / +12
+      50/50 +121.5%  12.9%  2.75 / 6.59 / 13.94          +44 / +46 /  +6
+      30/70 +104.7%  12.7%  2.88 / 6.35 / 12.05          +35 / +51 /  +0
+       0/100 +79.4%  12.9%  2.36 / 4.71 /  8.72          +24 / +57 /  -8
+   Every mix from 30/70 to 70/30 beats both legs alone on drawdown-adjusted terms and on all three ratios; 50/50 is the
+   centre. This is a plateau, not a peak.
+3. Scale: 67% + 67%. The EMA leg sized by risk rarely uses more than half of its sleeve, so a 50/50 split leaves a third of
+   the account idle. Same 1:1 composition at larger scale: 50% +121.5% / 12.9% (2.75 / 6.59 / 13.9); 60% +142.6% / 15.2%
+   (2.67 / 6.32 / 14.1); 67% +175.0% / 16.5% (2.79 / 6.73 / 16.4); 75% +194.6% / 18.6% (2.74 / 6.70 / 16.4). Sharpe and
+   Sortino do not move, return and drawdown scale together: this is a risk dial, not an edge. 67% is where the account is
+   about fully used without the legs fighting for cash. If the team prefers a smaller drawdown, set both to 50%.
+   Not chosen: 100% + 100% (cash-limited) printed +269% / 19% (Calmar 23), but its neighbours (100/80, 90/100, 100/120,
+   85/85) gave +174% to +209% with Calmar 14-17. It is a lucky peak created by which breakout entries were crowded out.
+4. BTC gate stays on the breakout leg only. Steering the EMA leg with it (longs only in good markets, shorts only in bad)
+   cut the 50/50 mix from +121.5% to +81.5% and every ratio (2.10 / 4.83 / 7.13), and the EMA leg alone from +79% to +27%.
+   Removing the gate from the breakout inside the mix is also worse: +170% but 26% drawdown (2.30 / 5.55 / 10.0).
+5. EMA stop judged on the hourly close, not intrabar. Leg alone: close +79.4% / 12.9% (2.36 / 4.71 / 8.72) vs intrabar
+   +94.8% / 15.3% (2.52 / 5.28 / 8.92). Inside the chosen mix the difference disappears: close +175.0% / 16.5%
+   (2.79 / 6.73 / 16.4, fresh 11-day mean +4.53%) vs intrabar +183.4% / 17.7% (2.83 / 6.81 / 16.1, fresh mean +4.41%).
+   The hourly-close version is preferred: same result, no one-minute stop code. Its weak spot is the last third of the EMA
+   leg (-8% alone, vs +2% intrabar).
+6. Slots: 4 per leg, as in the parts. 6 breakout slots: 2.76 / 5.79 / 12.2; 6 EMA slots: 2.47 / 4.92 / 9.8; at most 2
+   shorts: 2.55 / 5.64 / 11.8. All a little worse; no reason to change.
+7. No portfolio brake. "No new entries while equity is X below its 7-day high": on the mix X = 8%, 10%, 15% never or almost
+   never binds (results unchanged) and X = 5% costs a third of the return (+121.5% -> +83.7%, ratios 2.20 / 4.97 / 10.3).
+   On the long-only breakout: 5% +105%, 8% +181%, 10% +155%, 15% +162% (no effect). The 8% reading is one spike between two
+   worse neighbours: noise. The rule does not help.
+8. No z-score sleeve. Added to the 50/50 mix from idle cash: 10% -> 2.76 / 6.55 / 13.7, 20% -> 2.80 / 6.57 / 14.7 (base
+   2.75 / 6.59 / 13.9); it earned $2-5k on about 270 trades and needs resting limits and a disaster stop. With hourly
+   market orders only it earned +7% alone and -0.2% after stress. It neither helps nor hurts the ratios in any way that is
+   distinguishable from noise. Its only use is activity (it raises the long-only candidate from 40% to about 71% of days
+   with a fill at about zero expected profit).
+9. No K-Means / HMM regime switch. Round one showed the labels carry no information about which family pays; the only
+   "regime" input that earns its place is the one-line BTC>EMA480 gate on new breakout longs.
+
+WHAT EACH PART CONTRIBUTES IN CANDIDATE 1 (design, default costs, $100k start)
+  leg        trades   P&L        by third (1 / 2 / 3)
+  breakout    133   +$106,776    +40,749 / +43,717 / +22,310
+  ema         344    +$67,466    +18,845 / +66,584 / -17,963
+  of which EMA shorts 173 trades +$38,403 (+2,303 / +30,573 / +5,527); EMA longs 171 trades +$29,063 (about -23,500 in the last third)
+What shorts are worth: the same mix with the EMA leg long-only made +109.5% with a 25.9% drawdown (2.03 / 4.48 / 6.19):
+worse than the breakout alone. With the EMA leg short-only it made +141.2% / 15.1% (2.64 / 6.56 / 14.0), thirds
++54 / +38 / +13. So the short side is what makes the second leg worth having: about +$38k of profit and 9-11 points less
+drawdown on this (falling) market. EMA longs add return overall but lost in the last third. Long+short is kept because it
+is the version that survived round-one verification (it also made money on a price-inverted market; short-only did not).
+The mix is not sensitive to the EMA fast window: 24/200 in place of 48/200 gives +167% / 15.6% (2.68 / 6.59 / 16.4).
+
+CANDIDATE 1 (candidate_1.py) - breakout 67% + EMA 48/200 long+short 67%, hourly close, market orders
+  total +175.0%   max drawdown 16.5%   Sharpe 2.79  Sortino 6.73  Calmar 16.39
+  thirds +60.9% / +67.3% / +2.1%      stress +139.2% (drawdown 17.7%; thirds +52.2% / +60.2% / -1.9%)
+  11-day rolling windows: mean +4.69%, median +2.52%, win 66%, >=+10% 23%, <=-10% 0%, worst -8.7%
+  fresh-start 11-day windows (n=91, step 3 d): mean +4.53%, median +2.60%, win 71%, worst -7.8%, best +33.2%,
+     <=-5% in 11%, <=-10% in 0%, mean drawdown 5.4%, worst 10.1%; under stress mean +3.92%, median +2.17%, worst -8.5%
+  trades 477, win rate 39%, turnover 225x, fees $22,488, fills on 79% of days (median 10 active days of 11 in fresh
+     windows; 2% of fresh windows under 6 active days), at most 6 orders in one hour
+  concentration: 3 best coins (TUT, ZEC, ICP) 42% of net; the 10 best trades equal 102% of net; 28 of 50 coins profitable
+  look-ahead check: passed (40 cuts, start 744)
+CANDIDATE 2 (candidate_2.py) - long only: tuned breakout behind the BTC gate, 4 slots, hourly close, market orders
+  total +162.1%   max drawdown 27.5%   Sharpe 2.13  Sortino 5.13  Calmar 9.00
+  thirds +75.8% / +33.0% / +12.0%     stress +135.2% (drawdown 28.4%; thirds +67.9% / +28.0% / +9.5%)
+  11-day rolling windows: mean +4.62%, median 0.00%, win 45%, >=+10% 24%, <=-10% 1%, worst -15.0%
+  fresh-start 11-day windows: mean +4.50%, median 0.00%, win 45%, worst -13.2%, best +48.3%, <=-5% in 10%, <=-10% in 1%;
+     under stress mean +4.02%, worst -14.3%
+  trades 148, win rate 43%, turnover 147x, fees $14,718, fills on 40% of days; 24% of fresh 11-day windows had NO trade
+     and 63% had fewer than 6 active days (median 5)
+  concentration: 3 best coins (TUT, CFX, ZEC) 72% of net; the 10 best trades equal 141% of net; 22 of 40 coins profitable
+  look-ahead check: passed (40 cuts, start 744)
+  Long-only additions that were tried and rejected (all hourly-close): EMA longs as a sleeve 70/30 -> 2.08 / 4.96 / 6.97,
+  50/50 -> 2.13 / 4.85 / 6.21; EMA longs from idle cash 20-30% -> 1.98-2.08 / 4.5-4.8 / 7.0-7.8; EMA longs gated -> worse
+  again; 6 slots -> 1.94 / 4.64 / 5.97; z sleeve 30% as a sleeve -> 2.16 / 4.82 / 7.60; z sleeve from idle cash
+  (limit version) 2.15-2.18 / 5.12-5.14 / 9.3-9.7, (market-only) 2.14 / 4.92-5.01 / 8.9-9.0.
+
+WHAT THE LIVE BOT NEEDS
+Candidate 2: nothing new in kind. Hourly decision from completed candles, MARKET buys and sells, long only. Changes are
+  numbers and two indicators: 12 h return >= 10%, 120 h highest close, trailing exit at 4 x ATR(24) below the highest high
+  since entry (ratchet, judged on the hourly close) in place of the fixed 6%, and BTC close > EMA(480 h) for new entries.
+  Data: at least 1,500 hourly candles of BTC (EMA 480 must have converged) and 150 of every coin.
+Candidate 1: everything in candidate 2 plus (a) SHORT open and COVER close at market - new, untested live code;
+  (b) EMA(48), EMA(200), ATR(24) for every coin, needing at least 800 hourly candles each (the backtest waits 600 bars);
+  (c) position size from the stop distance: usd = min(16.6% of equity, 0.67% of equity x close / (6 x ATR24));
+  (d) a per-position trailing level and leg label kept across restarts; (e) one net position per coin (a coin held by one
+  leg is skipped by the other). No intrabar stops, no limit orders, no minute-level decisions.
+
+CAVEATS
+- Design data only, and a falling market. The short side's profit is partly the bear market (round one measured its beta
+  at about -0.4 to -0.5 and it lost in every rising stretch). In a rally the EMA shorts will cost money; the breakout
+  longs are expected to offset that, but no rising period long enough to prove it is in this data.
+- The last third is the weak one: candidate 1 made +2.1% (-1.9% after stress) and its EMA leg lost $18k there. Round-one
+  verification already said to expect about half of the EMA leg's headline. Treat +175% as an upper bound of what was seen.
+- Profits come from a handful of large moves (10 best trades = all of the net profit). Over 11 days the result depends on
+  whether one or two such moves occur: the median fresh window is +2.6% for candidate 1 and 0.0% for candidate 2.
+- Candidate 2 does nothing while BTC is under its 480 h EMA. If the competition needs trades on 8 of 14 days this is a
+  real risk; the z sleeve or a tiny EMA-long sleeve buys activity at roughly zero (z) or negative (EMA long) expected value.
+- Stops act on the hourly close: a fast crash inside an hour is not capped. Shorts have no intrabar stop either.
+- The 67% scale, the 1:1 split and the hourly-close stop were chosen on design. They sit on plateaus, but the selection and
+  holdout periods have not been looked at by this track.

@@ -17,7 +17,8 @@ from .strategy import Config
 
 
 # Config fields added after earlier ledgers were hashed, newest group first.
-LEGACY_FIELDS = [{'drawdown_brake', 'brake_window_bars'},
+LEGACY_FIELDS = [{'breakout_high_bars', 'trail_atr'},
+                 {'drawdown_brake', 'brake_window_bars'},
                  {'take_profit_pct', 'take_profit_trail', 'take_profit_fraction'}]
 
 
@@ -120,7 +121,8 @@ def migrate(path, config, universe, live, client):
             os.fsync(output.fileno())
         # Keep fills, cash, holdings, equity peak, halt and submission throttle.
         # Only unsubmitted decisions are invalidated for the new strategy.
-        updated = dict(state, config_hash=digest(config), pending=None, targets={},
+        # Trailing-stop levels belong to the old rule; high-water marks are kept, so they rebuild under the new one.
+        updated = dict(state, config_hash=digest(config), pending=None, targets={}, stop_levels={},
                        target_day=None, target_regime=None, market_regime=None, regime_age=0)
         append_event(path, {'event': 'config_migration', 'timestamp': int(time.time()*1000),
                             'mode': state['mode'], 'old_config_hash': state['config_hash'],

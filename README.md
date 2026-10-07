@@ -176,14 +176,15 @@ Session Manager terminal. The first time, pull to obtain the new script:
 ```sh
 cd /opt/roostoo
 sudo systemctl stop roostoo-bot
-sudo git pull --ff-only origin main
+sudo git pull --ff-only origin "$(git symbolic-ref --short HEAD)"
 sudo bash deploy/aws_update.sh
 sudo systemctl status roostoo-bot --no-pager
 sudo journalctl -u roostoo-bot -n 50 --no-pager
 ```
 
-For subsequent updates, the updater itself stops the service, pulls `main`,
-migrates the selected ledger, regenerates the unit, and starts the service:
+For subsequent updates, the updater itself stops the service, pulls the branch
+checked out on the server (`v4` for the current live rule), migrates the
+selected ledger, regenerates the unit, and starts the service:
 
 ```sh
 sudo bash /opt/roostoo/deploy/aws_update.sh
@@ -193,6 +194,8 @@ The updater backs up the state beside the existing ledger and appends a
 `config_migration` event to its journal. It preserves fills, cash, inventory,
 equity peak, drawdown halt, and last submission time. Unsubmitted pending
 signals and cached targets are cleared so the new strategy recalculates them.
+Saved trailing-stop levels are cleared as well; the high-water marks are kept,
+so each stop is rebuilt at the first hourly decision.
 It supports long-only allocation, breakout, regime-adaptive and trend-ensemble settings;
 it does not convert arbitrary strategy schemas. Mode switches, changes to
 `initial_cash`, unresolved submissions, locked balances, exchange pending
@@ -212,22 +215,39 @@ sudoedit /etc/roostoo/roostoo.env
 # Keep ROOSTOO_STATE pointing to the existing live ledger.
 ```
 
-The live candidate is a long-only breakout rotation, chosen on October 6 to
-pursue leaderboard return at the cost of much larger drawdowns. Every hour, from
-completed candles, a pair enters when its 24-hour return is at least 8% and it
-closes at a 72-hour high. There are four equal slots of about 25% of equity;
-the strongest 24-hour movers fill free slots. A slot is never trimmed or topped
-up. It is sold in full when an hourly close is 6% below the highest price since
-entry, and that pair is then locked out for 12 hours. With no qualifying
-breakout the account stays in cash. The portfolio halt is a 30% backstop.
-Replay and runner share `allocation.breakout_targets` and `Indicators`.
+The live candidate is a long-only breakout rotation. Every hour, from completed
+candles, a pair enters when it is up at least 8% over the last 12 hours and its
+close is within 0.1% of its highest close of the last 120 hours. There are four
+equal slots of about 25% of equity; the strongest 12-hour movers fill free
+slots. A slot is never trimmed or topped up. Each slot carries a trailing stop
+4 x ATR(24h) under the highest price since entry; the stop only moves up, and
+the slot is sold in full at the first hourly close at or below it. That pair is
+then locked out for 12 hours. With no qualifying breakout the account stays in
+cash. The portfolio halt is a 30% backstop. Replay and runner share
+`allocation.breakout_targets` and `Indicators`.
 
-`scripts/live_windows.py` replays the live config over independent 14-day
-episodes with the research engine: 34 episodes averaged +2.38% (median +1.52%,
-worst -14.70%, best +27.08%, 59% profitable, 21% above +10%, mean drawdown
-11%, worst 21%). Under doubled costs the mean is +0.05%, so the edge is
-cost-sensitive. The rule and its thresholds were chosen on this same history;
-treat the figures as a description of risk, not a forecast.
+These settings come from the study in [`research/`](research/README.md), run on
+October 7 after the team proposed a K-Means regime filter switching between an
+EMA crossover and z-score mean reversion. About 8,500 variants were tuned on the
+first 60% of the 50-pair history, frozen candidates were chosen on the next 20%,
+and the last 20% plus an older 12-coin set were held back. The breakout family
+was the only one positive in all four periods (+173%, +26%, +102%, +72% for the
+live settings; +126%, +15%, +86%, +65% under stress costs). The EMA crossover,
+the z-score rule, the regime switch, shorting in bad markets and a Bitcoin trend
+gate each lost in at least one held-back period and are not traded. The earlier
+breakout settings (8% in 24 hours at a 72-hour high, 6% trail) returned +40%,
++21%, -8% and +34%.
+
+It is a high-variance rule: over fresh-start 11-day windows the median is about
+zero, between a sixth and a third of windows gain 10% or more, and the worst
+window in each period lost 8-23%. About five trades out of a few hundred supply
+the profit. `scripts/live_windows.py` replays the live config in the
+repository's own engine over independent 14-day episodes: 34 episodes averaged
++8.95% (median +1.97%, worst -10.82%, best +140.54%, 53% profitable, mean
+drawdown 12%, worst 19%, a trade on a median of 11 of 14 days and at least 4);
++7.39% mean under doubled costs. That engine fills one order per hour, so it
+is accurate to a few points per episode; the live runner sends each hour's
+orders minutes apart.
 
 The lower-risk alternative is the strength-gated trend ensemble
 (`config/ranking_candidate_strength50.json` plus `drawdown_brake: 0.04`), which

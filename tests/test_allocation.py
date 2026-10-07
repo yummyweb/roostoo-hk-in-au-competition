@@ -85,3 +85,28 @@ class AllocationTests(unittest.TestCase):
         self.assertEqual(len(set((t['pair'],t['entry_time']) for t in r['trades'])),len(r['trades']))
         self.assertAlmostEqual(c.initial_cash+sum(t['net_pnl'] for t in r['trades']),r['metrics']['final_equity'],places=6)
 
+    def test_indicators_use_the_configured_high_window_and_a_24_bar_true_range(self):
+        bars,_=synthetic(days=30);btc=[b for b in bars if b.pair=='BTC/USD']
+        state=Indicators(Config(momentum=12,breakout_high_bars=120,trail_atr=4.))
+        for i,bar in enumerate(btc):
+            f=state.update(bar)
+            if i<120:continue
+            self.assertEqual(f['breakout_high'],max(b.close for b in btc[i-119:i+1]))
+            ranges=[max(b.high-b.low,abs(b.high-a.close),abs(b.low-a.close)) for a,b in zip(btc[i-24:i],btc[i-23:i+1])]
+            self.assertAlmostEqual(f['atr_24'],sum(ranges)/24,places=9)
+            self.assertAlmostEqual(f['momentum'],bar.close/btc[i-12].close-1,places=12)
+
+    def test_replay_stop_does_not_loosen_when_the_range_widens(self):
+        from roostoo.allocation import run_allocation
+        from roostoo.data import Bar
+        c=Config(strategy='allocation',rank_model='breakout',fast=8,slow=24,momentum=12,top_n=2,max_position=.5,max_exposure=.98,
+                 regime_min_move=.08,cooldown_bars=12,rebalance_bars=1,max_drawdown=.5,breakout_high_bars=24,trail_atr=4.)
+        rows=[(100.,100.5,99.5,100.)]*30+[(100.,112.5,100.,112.),   # 12% in an hour at a new high: buy at the next open
+              (112.,113.,111.5,112.5),                             # filled; high 113, ATR 1.5, stop 107
+              (112.5,113.,95.,106.9),                              # wide bar closes under 107; a recomputed stop would be near 104
+              (106.9,107.,106.5,106.9),(106.9,107.,106.5,106.9),(106.9,107.,106.5,106.9)]
+        bars=[Bar(1735689600000+i*3600000,'BTC/USD',*row,1000.) for i,row in enumerate(rows)]
+        r=run_allocation(bars,c,{},None)
+        filled=[(o['action'],o['signal_timestamp']) for o in r['orders'] if o['status']=='FILLED']
+        self.assertEqual(filled,[('OPEN',bars[31].timestamp-1),('CLOSE',bars[33].timestamp-1)])
+

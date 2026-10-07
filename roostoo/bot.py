@@ -57,6 +57,7 @@ def plan_order(state,wallet,quotes,targets,rules,c,now):
         fill=quotes[pair]['ask'] if side=='BUY' else price
         # Leave a modest quote-movement buffer before live acceptance.
         budget=min(delta,cash/(1+c.fee_bps/10000)*.995,max(0,c.max_exposure*equity-(equity-cash)),max(0,c.max_position*equity-held)) if side=='BUY' else min(-delta,held)
+        if c.rank_model=='breakout' and side=='BUY' and budget<desired/2:continue  # under half a slot would be released as a leftover
         amount=rules[pair].quantity(max(0,budget)/fill)
         if side=='SELL':amount=min(amount,q)
         if rules[pair].valid(amount,fill):
@@ -65,7 +66,7 @@ def plan_order(state,wallet,quotes,targets,rules,c,now):
                            'reason':'Drawdown halt: reduce exposure' if halted else
                                    ('Regime-adaptive rotation: rebalance confirmed trend leaders' if c.rank_model=='regime_adaptive'
                                     else 'Diversified trend ensemble: rebalance toward trend-vote targets' if c.rank_model=='trend_budget'
-                                    else ('Breakout slot: enter 72h high with strong 24h move' if side=='BUY' else 'Breakout slot: trailing stop or leftover exit') if c.rank_model=='breakout'
+                                    else (f'Breakout slot: {c.momentum}h move at a {c.breakout_high_bars}h high' if side=='BUY' else 'Breakout slot: trailing stop or leftover exit') if c.rank_model=='breakout'
                                     else 'Daily volatility allocation: rebalance toward target'),
                            'target_weight':targets.get(pair,0)})
     # A trailing profit trim takes priority over a new allocation entry.
@@ -178,7 +179,7 @@ class Runner:
     def update_position_meta(self,pair,side,quantity,price):
         meta=self.state.setdefault('position_meta',{});old=meta.get(pair)
         if side=='BUY':
-            if old and old.get('quantity',0)>0:
+            if old and old.get('quantity',0)>quantity*.01:   # dust from an earlier position starts a fresh record
                 oq=float(old['quantity']);nq=oq+quantity
                 old['avg_entry']=(oq*float(old['avg_entry'])+quantity*price)/nq
                 old['quantity']=nq;old['high']=max(float(old.get('high',price)),price)
@@ -205,7 +206,7 @@ class Runner:
         hour=now//HOUR
         if self.feature_hour==hour:return
         features={};trend=self.c.rank_model=='trend_budget'
-        count=max(self.c.slow*3,self.c.momentum+2,LOOKBACK+1 if trend else 0)
+        count=max(self.c.slow*3,self.c.momentum+2,self.c.breakout_high_bars+2,LOOKBACK+1 if trend else 0)
         for pair in self.rules:
             rows=[];end=hour*HOUR-1
             while len(rows)<count:
@@ -264,12 +265,14 @@ class Runner:
         equity=float(wallet.get('USD',{}).get('Free',0))+sum(value.values())
         held={p:v/equity for p,v in value.items() if v>self.rules[p].minimum}
         meta=self.state['position_meta']
+        for pair in [p for p in meta if p not in held]:del meta[pair]  # a record left by an earlier position must not seed a new one
         for pair in held:  # an untracked holding starts its high-water mark now
             meta.setdefault(pair,{'quantity':value[pair]/quotes[pair]['bid'],'avg_entry':quotes[pair]['bid'],'high':quotes[pair]['bid']})
         locked={p for p,until in self.state['profit_lock'].items() if until>now}
-        targets=breakout_targets(self.features,self.c,held,{p:float(meta[p]['high']) for p in held},locked)
+        targets=breakout_targets(self.features,self.c,held,{p:float(meta[p]['high']) for p in held},locked,
+                                 self.state.setdefault('stop_levels',{}))
         for pair in held:
-            if pair not in targets:self.state['profit_lock'][pair]=now+self.c.cooldown_bars*HOUR
+            if pair not in targets:self.state['profit_lock'][pair]=(now//HOUR+self.c.cooldown_bars)*HOUR  # whole hourly decisions
         return targets
 
     def submit(self,intent,quotes,now):
@@ -344,6 +347,8 @@ class Runner:
             self.state['target_day']=day
             if self.c.rank_model=='regime_adaptive':
                 self.state['target_regime']=self.state.get('market_regime')
+        # Empty targets before the first decision of a new ledger or config would read as "sell everything".
+        if self.state['target_day'] is None:raise ValueError('No target decision yet; holdings left untouched')
         intent,marks=plan_order(self.state,wallet,quotes,self.state['targets'],self.rules,self.c,now)
         self.state.update(marks)
         if marks['halted']:self.state['targets']={}

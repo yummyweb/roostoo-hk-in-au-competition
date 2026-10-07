@@ -26,7 +26,7 @@ def run_allocation(bars,c,manifest,rules,start_index=0,precomputed=None):
     if c.allow_short:raise ValueError('Allocation strategy currently supports long-only portfolios')
     states={p:Indicators(c) for p in pairs}
     positions={p:[] for p in pairs};trades=[];orders=[];signals=[];cash=c.initial_cash
-    pending=None;targets={};halted=False;peak=c.initial_cash;last_fill=-10**20;marks=[];highs={};locks={}
+    pending=None;targets={};halted=False;peak=c.initial_cash;last_fill=-10**20;marks=[];highs={};locks={};levels={}
     half=c.spread_bps/20000;slip=c.slippage_bps/10000;fee_rate=c.fee_bps/10000
     start=frames[start_index][0]
     curve=[dict(timestamp=start,equity=cash,cash=cash,drawdown=0.,exposure=0.,benchmark=cash)]
@@ -72,7 +72,7 @@ def run_allocation(bars,c,manifest,rules,start_index=0,precomputed=None):
                                  return_pct=net/(closing*p['entry_price']),holding_hours=(timestamp-p['entry_time'])/3600000)
                         remaining-=closing;closed_ids.append(p['id'])
                     order['trade_ids']=closed_ids
-                    if not positions[pair]:highs.pop(pair,None)
+                    if qty(pair)*market[pair].open<=rule.minimum:highs.pop(pair,None)   # dust does not carry a high-water mark
                 order.update(status='FILLED',fee=fee,slippage_cost=abs(price-side_price)*quantity);last_fill=timestamp
             else:order['rejection']='Order below exchange minimum or capacity limit'
             orders.append(order);pending=None
@@ -92,7 +92,7 @@ def run_allocation(bars,c,manifest,rules,start_index=0,precomputed=None):
         for pair in highs:highs[pair]=max(highs[pair],market[pair].high)
         if c.rank_model=='breakout':
             held={p:qty(p)*market[p].close/equity for p in pairs if qty(p)*market[p].close>rules[p].minimum}
-            targets=breakout_targets(features,c,held,highs,{p for p,until in locks.items() if until>index})
+            targets=breakout_targets(features,c,held,highs,{p for p,until in locks.items() if until>index},levels)
             for pair in held:
                 if pair not in targets:locks[pair]=index+c.cooldown_bars
         elif not targets or (timestamp//interval)%c.rebalance_bars==0:
@@ -133,18 +133,27 @@ def run_allocation(bars,c,manifest,rules,start_index=0,precomputed=None):
                         'Annualized ratios on 14-day episodes are unstable; activity counts do not prove organizer eligibility.']}
 
 
-def breakout_targets(features,c,held,highs,locked):
+def breakout_targets(features,c,held,highs,locked,levels):
     """Equal slots for the strongest breakouts; shared by replay and the runner.
 
     A pair enters when its `momentum`-bar return is at least `regime_min_move`
-    and it closes at a 72-bar high. A holding keeps its slot until it closes
-    `take_profit_trail` below its high since entry; `held` maps pairs to their
-    equity weight. Holdings under half a slot are leftovers and are released.
+    and it closes within 0.1% of its `breakout_high_bars` highest close. A
+    holding keeps its slot until it closes at or below its trailing stop:
+    `trail_atr` 24-bar average true ranges under the highest price since entry
+    (or the fixed `take_profit_trail` fraction when trail_atr is 0). The stop
+    only moves up; `levels` holds it per pair for as long as the pair is held
+    and is updated in place. `held` maps pairs to their equity weight; holdings
+    under half a slot are leftovers and are released.
     """
-    slot=c.max_exposure/c.top_n
-    keep=[p for p,weight in held.items() if weight>=slot/2 and features[p]['close']>highs.get(p,0)*(1-c.take_profit_trail)]
+    slot=c.max_exposure/c.top_n;keep=[]
+    for p,weight in held.items():
+        f=features[p];high=highs.get(p,0)
+        raw=high-c.trail_atr*f['atr_24'] if c.trail_atr else high*(1-c.take_profit_trail)
+        levels[p]=max(levels.get(p,0.),raw)
+        if weight>=slot/2 and f['close']>levels[p]:keep.append(p)
+    for p in [p for p in levels if p not in held]:del levels[p]    # a fired stop stays fired until the holding is gone
     fresh=sorted((p for p,f in features.items() if f['ready'] and p not in held and p not in locked
-                  and f['momentum']>=c.regime_min_move and f['close']>=f['high_72']*.999),
+                  and f['momentum']>=c.regime_min_move and f['close']>=f['breakout_high']*.999),
                  key=lambda p:(-features[p]['momentum'],p))[:max(0,c.top_n-len(keep))]
     return {p:slot for p in keep+fresh}
 

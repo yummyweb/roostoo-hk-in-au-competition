@@ -1,0 +1,128 @@
+INTEGRATION REPORT - angle "competition_fit"
+Design data only (harness.load('design'), rows 744-7,519, 2025-06-02 to 2026-03-11). No other panel was loaded.
+47 distinct combinations run, each on fresh-start 11-day windows at default and stress costs plus the standard report.
+Files: cf.py (the combined class), ev.py (fresh-window statistics), s0_replicate.py, s1_legs.py/.log, s2_mix.py/.log,
+s3_final.py/.log, s4_candidates.py/.log, candidates.json, candidate_1.py, candidate_2.py.
+
+WHAT THE TEAM ASKED FOR, AND WHAT IS IN THE TWO DESIGNS
+  Asked: K-Means regime filter -> EMA crossover or z-score mean reversion; short bad markets, long good ones; maker orders.
+  Delivered: breakout longs + EMA 48/200 crossover long AND short, every position sized by risk at its stop, market orders.
+  Left out because the first round showed they lose, and nothing here changed that:
+    - z-score mean reversion (no edge after costs in 675 window settings);
+    - the K-Means / HMM regime label (no information about which family pays);
+    - maker-only execution (the limit orders that miss are the winners).
+  The only regime filter that earned its place is a plain one: BTC hourly close above its 480 h EMA, used ONLY to allow
+  new breakout longs (balanced design). Using the same label to switch the EMA leg (longs in good markets, shorts in bad)
+  made the EMA leg worse: fresh 11-day mean +1.5% against +2.5% ungated, and Sortino 2.3 against 6.4.
+
+HOW IT WAS JUDGED
+  Fresh start: the strategy is restarted flat with $100k at the start of every 11-day window (91 windows at a 3-day step,
+  136 at a 2-day step), indicators already warm. Only about 26 of these windows are independent, and only 38 of 91 had a
+  rising market (the design period was a bear market). 90% intervals below come from a block bootstrap over windows.
+
+THE TWO DESIGNS (both pass h.causality_check with 40 cuts, start=744)
+
+  candidate_1.py  BALANCED
+    Breakout longs (10% in 12 h, 120 h high, 4 x ATR trail on the hourly close, 12 h lockout, 4 positions) allowed only
+    while BTC > its 480 h EMA; EMA 48/200 long+short (entry within 3 bars of the cross, 6 x ATR trail judged on the
+    hourly close, exit on the opposite cross, 4 positions), not gated. Risk at the stop: breakout 1% of equity, EMA 0.5%.
+    Fresh 11-day windows, 3-day step: mean +3.97%, median +2.10%, above zero 75%, at or above +1.5% 57%, at or above +5% 30%,
+      worst -6.2%, drawdown inside the window 4.2% on average and 7.8% at worst; Sortino / Sharpe / Calmar medians 7.2 / 3.5 / 45.
+    Same, 2-day step: mean +3.70%, median +1.72%, above zero 68%, at or above +1.5% 52%, worst -6.3%.
+    Stress costs (3-day step): mean +3.47%, median +1.88%, above zero 70%, at or above +1.5% 55%, worst -6.8%.
+    By market: rising windows +7.3% (84% above zero), falling windows +1.6% (68% above zero).
+    By third of the design period (mean / above zero / at or above +1.5%): +5.3% 77% 67% | +5.1% 80% 63% | +1.6% 68% 42%.
+    By leg, % of equity per window: breakout +2.64, EMA +1.33 (stress +2.42, +1.05).
+    Activity: fills on 9.4 calendar days per window; 90% of windows have 7 or more; 93% of 14-day windows have 8 or more
+      (worst 4). No trade in the first 3 days: 2% of windows; in the first 7 days: 1%.
+    Continuous run: +145.5%, max drawdown 13.6%, Sharpe 2.92, Sortino 7.86, Calmar 16.1, thirds +53% / +49% / +8%,
+      stress +118.8% (thirds +46% / +44% / +4%), 485 trades, 39% winners, turnover 169x, fills on 79% of days.
+      P&L by leg: breakout +$99.1k (138 trades), EMA +$45.9k (347 trades; longs +$21.4k, shorts +$24.5k).
+      Stress: breakout +$85.5k, EMA +$33.0k.
+    Chance of finishing an 11-day window at or above +1.5%: about 52-57%, 90% interval 41% to 69%.
+
+  candidate_2.py  AGGRESSIVE
+    Same two legs, no BTC gate, twice the risk: breakout 2% of equity at the stop, EMA 1%.
+    Fresh 11-day windows, 3-day step: mean +5.80%, median +3.47%, above zero 63%, at or above +1.5% 57%, at or above +5% 43%,
+      at or above +10% 31%, at or below -5% 16%, worst -13.9%, drawdown inside the window 8.1% on average and 19.8% at worst;
+      Sortino / Sharpe / Calmar medians 4.4 / 2.4 / 25.
+    Same, 2-day step: mean +5.33%, median +2.67%, above zero 59%, at or above +1.5% 56%, at or above +5% 39%, worst -14.7%.
+    Stress costs (3-day step): mean +4.90%, median +2.45%, above zero 59%, at or above +5% 41%, worst -15.0%.
+    By market: rising windows +8.6% (66% above zero), falling windows +3.8% (60%).
+    By third (mean / above zero / at or above +1.5%): +6.3% 67% 63% | +11.6% 73% 67% | -0.3% 48% 42%.
+    By leg, % of equity per window: breakout +3.63, EMA +2.17 (stress +3.22, +1.68).
+    Activity: 9.9 days per window; 96% of windows have 7 or more; 96% of 14-day windows have 8 or more (worst 5).
+    Continuous run: +173.0%, max drawdown 30.1%, Sharpe 2.18, Sortino 5.11, Calmar 8.9, thirds +46% / +119% / -15%,
+      stress +119.8% (thirds +36% / +104% / -21%), 527 trades, 36% winners, turnover 398x, fills on 84% of days.
+      P&L by leg: breakout +$129.5k (178 trades), EMA +$42.5k (349 trades; shorts +$36.1k). Stress: +$102.0k, +$17.1k.
+    Chance of finishing at or above +1.5%: about 56-57%, 90% interval 43% to 70%. At or above +5%: about 39-43%, interval 27% to 56%.
+
+  The two designs cannot be told apart on the chance of getting back to flat (both about 55%, each +/- 14 points). What the
+  aggressive one buys is the right tail (+10% or more in 31% of windows against 18%) at the price of the left tail (-5% or
+  worse in 16% against 5%; worst -14% against -6%). In the last third of the design period it averaged -0.3% per window.
+
+COMPARISON ON FRESH 11-DAY WINDOWS (3-day step, default costs)
+  design                               mean   median  >0   >=1.5%  >=5%  worst   active days  no trade in first 3 d / 7 d / 11 d
+  breakout 4 slots, equal size        +5.44%  +1.59%  53%   51%    41%   -15.9%     7.4          12% /  2% /  0%
+  breakout 6 slots, equal size        +3.77%  +0.52%  52%   46%    37%   -11.1%     7.5          12% /  2% /  0%
+  breakout 4 + BTC gate               +4.50%   0.00%  45%   40%    32%   -13.1%     4.6          48% / 32% / 24%
+  breakout 6 + BTC gate               +2.93%   0.00%  47%   37%    29%    -9.3%     4.7          48% / 32% / 24%
+  breakout 4, risk 0.5% / 1% / 2%     +1.81 / +3.60 / +5.45% mean; worst -2.7 / -5.3 / -9.8%; above zero 57-58%
+  EMA 48/200 L+S risk 0.5% / 1% / 2%  +1.28 / +2.53 / +3.67% mean; worst -5.9 / -10.8 / -18.8%; above zero 67-69%; 8.6 days; 2% / 1% / 0%
+  EMA 48/200 L+S equal slots          +3.96%  +3.92%  68%   60%    45%   -21.0%     8.6
+  EMA long only, risk 1%              +0.91%  -0.57%  46%   34%    19%    -7.7%     (no edge)
+  EMA short only, risk 1%             +1.32%  +1.46%  57%   49%    18%    -6.3%     (-1.2% and 26% above zero in rising windows)
+  mix, risk 1% each, no gate          +4.85%  +3.88%  66%   59%    45%   -14.4%    10.2           2% /  1% /  0%
+  mix, risk 1% each, gate             +4.59%  +3.50%  71%   60%    38%   -10.8%     9.5           2% /  1% /  0%
+  mix, risk 0.5% each, gate           +2.65%  +1.71%  73%   54%    23%    -5.9%     9.7
+  team's rule: gated breakout + EMA shorts only in bad markets (risk 1%)
+                                      +3.87%  +3.55%  66%   60%    41%    -7.4%     8.7           7% /  3% /  2%
+  gated breakout + EMA long-in-good / short-in-bad
+                                      +3.79%  +2.60%  65%   56%    36%   -11.2%     9.0
+  breakout 4 + standing BTC short 33% +4.11%  +2.03%  55%   52%    38%    -8.2%     8.0
+  mix risk 1% each + BTC short 33%    +4.76%  +4.24%  69%   63%    46%   -11.6%    10.2
+  BALANCED (candidate_1)              +3.97%  +2.10%  75%   57%    30%    -6.2%     9.4           2% /  1% /  0%
+  AGGRESSIVE (candidate_2)            +5.80%  +3.47%  63%   57%    43%   -13.9%     9.9           2% /  1% /  0%
+
+INTEGRATION CHOICES MADE HERE (everything else is a first-round plateau centre)
+  1. Which legs: breakout longs + EMA 48/200 long+short. Daily-return correlation between the two legs 0.28 to 0.34
+     (0.25 to 0.42 on 11-day window returns), so they diversify, and the EMA leg fixes the activity problem.
+  2. Gate: BTC > EMA(480 h) on new breakout longs in the balanced design only. In a mix it raises the share of windows
+     above zero (71% against 66%) and cuts the worst window (-10.8% against -14.4%) for 0.3 points of mean. Alone it leaves
+     the account idle (no trade at all in 24% of windows), so it must not be run without the EMA leg.
+  3. Sizing: risk at the stop instead of equal slots. Breakout at 2% risk has the same mean as equal slots (+5.45%) with a
+     worst window of -9.8% instead of -15.9%. Risk grid 0.5 / 1 / 2% only. Balanced: each leg at the largest grid value at
+     which that leg alone keeps its worst window inside -8% (breakout 1%: -5.3%; EMA 0.5%: -5.9%; EMA 1% fails at -10.8%).
+     Aggressive: both doubled.
+  4. EMA stop judged on the hourly close instead of intrabar: same result in the mix on fresh windows (mean +4.78% against
+     +4.85%, worst -12.6% against -14.4%) and it needs no minute-level stop code. In the 9-month continuous run the
+     close-based version of the aggressive design made less (+173% against +268%), so this is not free everywhere.
+  5. Shared cash, exits first, breakout entries before EMA entries, entry skipped if free cash is below half its size.
+
+WHAT SUBTRACTS VALUE OR DOES NOT HELP (said plainly)
+  - Z-score mean reversion and the K-Means regime label: no edge; not included.
+  - "Short when the market is bad": timing shorts with the BTC label is worse than not timing them. EMA shorts alone are a
+    bet on a falling market (rising windows: 26% above zero). The symmetric long+short EMA leg is what survives.
+  - A standing BTC short: +1.5 points per window when the market fell, -2.3 points when it rose. A direction bet, not an edge.
+  - The BTC gate without an always-active leg: median window 0%, 4.6 active days of 11, fails the 8-of-14-days rule.
+  - 6 breakout slots instead of 4: lower mean, same share of winning windows.
+  - Equal slots: larger worst window for the same mean. EMA at 2% risk or equal slots: worst window -19% to -21%.
+  - In the aggressive design the EMA leg takes cash from the breakout leg: breakout alone at 2% risk made +213% in the
+    continuous run and +5.45% per fresh window; with the EMA leg the totals are +173% and +5.80%. The EMA leg there buys
+    a better median (+3.5% against +1.5%) and activity (9.9 days against 7.4), not a higher return.
+
+LIVE REQUIREMENTS
+  Both designs decide once per hour from completed hourly candles and send market orders only. No resting limits and no
+  intrabar stops. The one new capability is opening and covering 1x shorts at market for the EMA leg. If shorts cannot be
+  made to work, drop the whole EMA leg (EMA long-only has no edge): the fallback is breakout longs risk-sized at 1%
+  (mean +3.6%, median +1.0%, above zero 58%, worst -5.3%) or 2% (mean +5.45%, median +1.5%, above zero 57%, worst -9.8%), both
+  ungated, with fills on 7.4 days of 11 and 7 or more active days in only 64% of windows.
+  Data: 600 hourly candles per coin (3 x 200 for the slow EMA; 480 for the BTC gate), 50 pairs.
+
+CAVEATS
+  - About 26 independent 11-day windows; every probability above carries roughly +/- 14 points. The step of the windows
+    alone moves the balanced design's share above zero from 75% to 68%.
+  - The design period is one bear market. Both legs were weakest in its last third (balanced +1.6% per window, aggressive -0.3%).
+  - First-round fragility carries over: five trades supply the breakout profit; the EMA centre is a local peak (expect about half).
+  - Both legs were selected on this same data; the combination adds two sizing numbers, one gate switch and one stop style.
+  - Short fills, short fees and the cap on short losses are modelled, not measured on the real exchange.
