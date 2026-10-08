@@ -62,6 +62,12 @@ class Config:
     mr_hold_bars: int = 48          # time limit of a mean-reversion position
     mr_stop: float = .20            # exit when an hourly close is this far against the entry
     mr_cooldown_bars: int = 12      # bars a coin waits after a mean-reversion exit
+    # Regime legs, exits checked every minute on live quotes (0 switches a rule off).
+    stop_loss: float = 0.0          # close a position this far against its entry price
+    profit_trail: float = 0.0       # once a position has been in profit after fees, close it this far off its best price
+    mr_take_profit: float = 0.0     # close a mean-reversion position at this profit after fees
+    fast_cut: float = 0.0           # close a losing position that moves this far against it within fast_minutes
+    fast_minutes: int = 15
 
     def validate(self):
         if self.strategy not in ('trend','hybrid','rotation','pullback','reversion','allocation','lstm_prediction','cross_asset','buy_hold','cash'):
@@ -88,6 +94,9 @@ class Config:
         if any(type(v) is not int or not 1 <= v <= 1000 for v in (self.ema_fresh_bars,self.mr_window,self.mr_slots,self.mr_hold_bars,self.mr_cooldown_bars)) \
                 or self.mr_window < 20 or not 0 < self.mr_entry_z <= 10 or not 0 < self.mr_fraction <= 1 or not 0 < self.mr_stop < 1:
             raise ValueError('Invalid regime-legs configuration')
+        if any(not 0 <= v < 1 for v in (self.stop_loss,self.profit_trail,self.mr_take_profit,self.fast_cut)) \
+                or type(self.fast_minutes) is not int or not 1 <= self.fast_minutes <= 120:
+            raise ValueError('Invalid live exit configuration')
         if not 2 <= self.fast < self.slow <= 1000 or not 2 <= self.momentum <= 1000:
             raise ValueError('Require 2 <= fast < slow <= 1000 and a valid momentum window')
         if any(not math.isfinite(v) for v in asdict(self).values() if isinstance(v, (float,int))):

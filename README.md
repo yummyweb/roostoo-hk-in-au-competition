@@ -223,8 +223,9 @@ sudoedit /etc/roostoo/roostoo.env
 ```
 
 The live candidate is the team's regime strategy (`rank_model: regime_legs`):
-a regime label per coin decides which rule trades it, long or short. Every
-hour, from completed candles:
+a regime label per coin decides which rule trades it, long or short. Entries
+are decided every hour from completed candles; exits are also checked every
+minute on live quotes.
 
 - **Regime.** Each coin is labelled BULL, BEAR or CHOP by a three-state hidden
   Markov model started from K-Means clusters (Haryani, Chandra and Tarigan,
@@ -232,16 +233,24 @@ hour, from completed candles:
   hourly returns. One model serves all 50 coins (`config/coin_regime.json`,
   fitted by `scripts/fit_coin_regime.py`); the runner applies it with a
   forward filter, so a label uses only past candles.
-- **BULL and BEAR: EMA crossover.** Buy a BULL coin within 12 hours of its
-  48-hour EMA crossing above its 200-hour EMA; short a BEAR coin within 12
-  hours of the cross below. At most four positions, the widest gap first, each
-  sized so that its stop loses 1% of equity (capped at a quarter of equity).
-  Exit when the EMAs cross back, or at an hourly close through a trailing stop
-  6 x ATR(24h) from the best price since entry, which only tightens.
-- **CHOP: z-score mean reversion.** Buy a CHOP coin whose close is 3 standard
-  deviations below its 168-hour mean and short one 3 above; 5% of equity each,
-  at most ten. Exit at the first hourly close back across the mean, after 48
-  hours, or 20% against the entry; the coin then waits 12 hours.
+- **BULL and BEAR: EMA crossover.** Buy a BULL coin within 24 hours of its
+  48-hour EMA crossing above its 200-hour EMA; short a BEAR coin within 24
+  hours of the cross below. At most four positions, the widest gap first, 15%
+  of equity each. Hourly exit when the EMAs cross back.
+- **CHOP: z-score mean reversion.** Buy a CHOP coin whose close is 2.5 standard
+  deviations below its 168-hour mean and short one 2.5 above; 10% of equity
+  each, at most four. Hourly exit at the first close back across the mean or
+  after 24 hours; the coin then waits 12 hours.
+- **Every minute, on the live bid (longs) or ask (shorts)** (`legs.watch`):
+  a *stop-loss* 2% against the entry price; a *profit lock* that, once a
+  position has been in profit after both fees, closes it when the price is 1%
+  off its best since entry; a *profit target* that closes a mean-reversion
+  position at +1% after fees; and a *fast-fall cut* that closes a losing
+  position when the price has moved 1% against it within 15 minutes (from the
+  runner's own record of each minute's quotes). A coin closed this way waits
+  out its cooldown (6 hours for the crossover, 12 for mean reversion).
+- **Loss brake.** While equity is 2% or more below its highest value of the
+  last 24 hours nothing new is opened; open positions keep their own exits.
 
 Orders are market orders, one per minute. Shorts are 1x through the exchange's
 short endpoints; an interrupted short request is settled from the exchange's
@@ -250,9 +259,17 @@ trading. `roostoo/legs.py` holds the one decision function: the runner calls
 it, and the research harness calls the same function through
 `research/lab/work/live_legs/`.
 
-Every window except the two regime features came from the October 7 study
+The hourly rules were first run live on October 8 as
+`config/regime_hourly_candidate.json` (entry within 12 hours of the cross and
+at 3 standard deviations, risk-sized crossover positions with a 6 x ATR(24h)
+trailing stop, 5% mean-reversion positions held up to 48 hours, no minute
+exits). The team added the minute exits, the larger sizes, the looser entries
+and the loss brake that evening; those were not backtested (the harness works
+on hourly candles) and their numbers are the team's choice.
+
+Every window of the hourly preset except the two regime features came from the October 7 study
 ([`research/`](research/README.md)); the regime windows were chosen on the
-design period among nine pairs. Run through that harness the strategy returned
+design period among nine pairs. Run through that harness the hourly preset returned
 +17.7% on the design period, +3.5% on the selection period, -13.5% on the
 holdout and -19.2% on the older 12-coin set (+7.0%, -1.6%, -18.2%, -20.8%
 under stress costs), trading on 84-93% of days. It roughly breaks even while

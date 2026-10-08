@@ -17,7 +17,7 @@ from urllib.request import urlopen
 from .api import Client,APIError
 from .allocation import allocation_targets,brake_scale,breakout_targets
 from .data import Bar
-from .legs import decide
+from .legs import decide,watch
 from .ranking import LOOKBACK,trend_frame
 from .regime_hmm import RegimeFilter
 from .rules import load_rules
@@ -130,6 +130,7 @@ class Runner:
         self.rules=None;self.features=None;self.feature_hour=None;self.info=None;self.labels={}
         self.regime=json.loads(COIN_REGIME.read_text()) if self.legs else None
         self.no_shorts=False   # set when the exchange says this account cannot short; the short side is then skipped
+        self.tape={}           # pair -> [(time, mid price)] of the last fast_minutes, from the quotes read each cycle
 
     def log(self,event):
         with self.path.with_suffix('.jsonl').open('a') as f:
@@ -420,7 +421,7 @@ class Runner:
     def act(self,action,account,quotes,now):
         """Carry out one queued action against the current account. Sizes come from equity at this moment."""
         pair,kind=action['pair'],action['action'];book=self.state['book'];rule=self.rules[pair]
-        opened={'leg':action.get('leg'),'bar':now//HOUR,'level':None}
+        opened={'leg':action.get('leg'),'bar':now//HOUR,'level':None,'opened':now}
         budget=min(action.get('weight',0)*account['equity'],account['cash']/(1+self.c.fee_bps/10000)*.995)
         if kind in ('BUY','SHORT') and budget<action['weight']*account['equity']/2:return False   # not enough cash for half the size
         if kind=='SELL':
@@ -446,6 +447,15 @@ class Runner:
             book[pair]=dict(opened,side=-1,entry=price,high=price,low=price)
         save_state(self.path,self.state);return True
 
+    def drift(self,quotes,now):
+        """Price change of each pair over the last fast_minutes, from the bot's own minute-by-minute record of mid prices."""
+        span=self.c.fast_minutes*60000;out={}
+        for pair,q in quotes.items():
+            mid=(q['bid']+q['ask'])/2;tape=self.tape.setdefault(pair,[]);tape.append((now,mid))
+            while tape[0][0]<now-span:tape.pop(0)
+            if now-tape[0][0]>=span*.8:out[pair]=mid/tape[0][1]-1
+        return out
+
     def cycle_legs(self):
         self.client.sync_clock();now=int(time.time()*1000+self.client.offset);candle_error=None;started=time.time()
         try:self.refresh_features(now)
@@ -468,6 +478,11 @@ class Runner:
             if gone:del book[pair]
         state['peak']=max(state.get('peak',account['equity']),account['equity'])
         if account['equity']<=0 or 1-account['equity']/state['peak']>=self.c.max_drawdown:state['halted']=True
+        hour=now//HOUR;marks=[m for m in state.get('equity_marks',[]) if m[0]>hour-self.c.brake_window_bars]
+        if marks and marks[-1][0]==hour:marks[-1][1]=max(marks[-1][1],account['equity'])
+        else:marks.append([hour,account['equity']])
+        state['equity_marks']=marks                                               # the loss brake: nothing new is opened this far below the recent high
+        braked=self.c.drawdown_brake>0 and account['equity']<=max(m[1] for m in marks)*(1-self.c.drawdown_brake)
         if self.feature_hour==now//HOUR and state.get('legs_bar')!=bar:
             exits,entries=decide(self.features,self.labels,book,state['locks'],replace(self.c,allow_short=False) if self.no_shorts else self.c,bar)
             carried=[a for a in state['queue'] if a['action'] in CLOSING and a['pair'] in book and a['pair'] not in exits]   # an exit not yet sent still stands
@@ -476,7 +491,13 @@ class Runner:
                               'reason':f"{leg} {'long' if side>0 else 'short'} in {self.labels.get(p)}"} for p,side,leg,weight in entries]
             state['legs_bar']=bar
             self.log({'event':'decision','timestamp':now,'bar':bar,'refresh_seconds':refresh_seconds,'labels':self.labels,'queue':state['queue']})
-        if state.get('legs_bar')!=bar or state['halted']:                         # an entry is good only in the hour after its candle, and never after a halt
+        for pair,reason in watch(book,quotes,self.c,now,self.drift(quotes,now)):  # every minute: stop-loss, profit lock, profit target, fast fall
+            if any(a['pair']==pair and a['action'] in CLOSING for a in state['queue']):continue
+            p=book[pair];state['queue']=[a for a in state['queue'] if a['pair']!=pair]
+            state['queue'].insert(0,{'pair':pair,'action':'SELL' if p['side']>0 else 'COVER','reason':reason})
+            state['locks'][pair]=now//HOUR+(self.c.cooldown_bars if p['leg']=='ema' else self.c.mr_cooldown_bars)
+            self.log({'event':'exit_signal','timestamp':now,'pair':pair,'reason':reason,'leg':p['leg'],'side':p['side'],'entry':p['entry'],'best':p['best'],'quote':quotes[pair]})
+        if state.get('legs_bar')!=bar or state['halted'] or braked:               # an entry is good only in the hour after its candle, never after a halt or under the brake
             state['queue']=[a for a in state['queue'] if a['action'] in CLOSING]
         if state['halted']:                                                       # a halt closes everything, with or without candles
             waiting={a['pair'] for a in state['queue']}
@@ -495,13 +516,15 @@ class Runner:
                 state['queue'].remove(action);done=dict(action,filled=self.act(action,account,quotes,now));break
         counts={k:sum(1 for v in self.labels.values() if v==k) for k in ('BULL','BEAR','CHOP')}
         held={f"{leg}_{'long' if side>0 else 'short'}":sum(1 for p in book.values() if p['leg']==leg and p['side']==side) for leg in ('ema','mr') for side in (1,-1)}
-        self.log({'event':'snapshot','timestamp':now,'equity':account['equity'],'cash':account['cash'],'halted':state['halted'],
-                  'regimes':counts,'book':book,'queue':state['queue'],'done':done,'candle_error':candle_error})
+        invested=(sum(q*quotes[p]['bid'] for p,q in account['longs'].items())+sum(s['value'] for s in account['shorts'].values()))/account['equity'] if account['equity']>0 else 0.
+        self.log({'event':'snapshot','timestamp':now,'equity':account['equity'],'cash':account['cash'],'halted':state['halted'],'brake':braked,
+                  'invested':invested,'regimes':counts,'book':book,'queue':state['queue'],'done':done,'candle_error':candle_error})
         save_state(self.path,state)
-        # No candles for this hour means no exit rule is being checked: say so every minute until they arrive.
+        # No candles for this hour means no hourly decision (the minute exits above still ran): say so until they arrive.
         if candle_error and self.feature_hour!=now//HOUR:raise ValueError('No candles for this hour, no decision made: '+candle_error)
-        return {'mode':state['mode'],'equity':account['equity'],'fills':state['fills'],'halted':state['halted'],'regimes':counts,
-                'positions':held,'queued':len(state['queue']),'done':f"{done['action']} {done['pair']}" if done and done['filled'] else None}
+        return {'mode':state['mode'],'equity':account['equity'],'fills':state['fills'],'halted':state['halted'],'brake':braked,
+                'invested':round(invested,3),'regimes':counts,'positions':held,'queued':len(state['queue']),
+                'done':f"{done['action']} {done['pair']}" if done and done['filled'] else None,'why':done['reason'] if done and done['filled'] else None}
 
     def cycle(self):
         if self.legs:return self.cycle_legs()

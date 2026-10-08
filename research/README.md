@@ -87,7 +87,7 @@ runner. About five trades out of a few hundred supply the profit in every period
 - **Breakout**: the only family positive in all four periods. Its parameters sit on a plateau: move 8-12% over
   6-12 h, high window 72-240 h, trail 3-4.5 x ATR(24 h) on the hourly close, 3-6 slots, lockout immaterial.
 
-## The team strategy as run live (8 October)
+## The team strategy with hourly exits (8 October)
 
 After this study the team chose to run its own design: a per-coin BULL/BEAR/CHOP label (the paper's K-Means plus HMM
 on the 24-hour return and 24-hour volatility) picking between the EMA 48/200 crossover (long in BULL, short in BEAR)
@@ -106,7 +106,9 @@ specification (`lab/work/team_final/`) gives identical trades.
 P&L by leg over the four periods: EMA longs -$4k / +$4k / +$8k / -$11k, EMA shorts +$29k / -$2k / -$18k / +$2k,
 mean-reversion longs -$3k / -$1k / +$3k / -$3k, mean-reversion shorts -$4k / -$2k / -$8k / -$7k.
 Reproduce with `ROOSTOO_REPO=$PWD .venv-lstm/bin/python research/lab/work/live_legs/periods.py` (run from
-`research/lab`).
+`research/lab`). These numbers are for `config/regime_hourly_candidate.json`. The live preset has since gained exits
+checked every minute, larger positions, looser entries and a loss brake (root README); none of that was run here,
+because this harness works on hourly candles and the team chose to judge it live.
 
 ## The breakout rule and why its numbers
 

@@ -229,10 +229,12 @@ class BotTests(unittest.TestCase):
         first=dict(strategy='cross_asset',rank_model='regime_adaptive',momentum=12,rebalance_bars=1,target_volatility=.8,rebalance_band=.01,
                    rank_min_trend_strength=.5,regime_min_move=.02,regime_hold_bars=0)
         # config_hash each commit's runner stored for its own config/live_candidate.json (recomputed from that commit's code).
-        for fields,missing_groups,stored in ((dict(live,momentum=12,breakout_high_bars=120,trail_atr=4.),1,'1fbcc3bc9d5bf9c41f7a3711f78c45b39074731b3e59241380d5a61c4fd3381e'),  # c0f9374
-                                             (live,2,'33d2d3f0a5545eff515ed9e2570f15aefbc01b644982f5336e8e72f3f3761e69'),      # fd1b585, 77905fc
-                                             (ensemble,2,'57d9de1a75a22de474fa486c670d05e9ebd53cc0c23d99178c852ef906fe4e66'),  # 2fc7b16
-                                             (regime,3,'6669631f8b3ef5c8e5eceaaf81221a25226f8ba9558a8099437e3818379d7abc'),    # b97285e (main)
-                                             (first,4,'a934ee4110f3e3492f856a1203f8c5ce349a1a8a6dae6851166200d2b1134019')):    # 83fc82b
+        hourly=json.loads((Path(__file__).resolve().parents[1]/'config/regime_hourly_candidate.json').read_text())
+        for fields,missing_groups,stored in ((hourly,1,'5ccadc8bf43cb8fd7069fd66ead038d6a3054d6ece3a891118fb1780000b876b'),    # 1d5eea9
+                                             (dict(live,momentum=12,breakout_high_bars=120,trail_atr=4.),2,'1fbcc3bc9d5bf9c41f7a3711f78c45b39074731b3e59241380d5a61c4fd3381e'),  # c0f9374
+                                             (live,3,'33d2d3f0a5545eff515ed9e2570f15aefbc01b644982f5336e8e72f3f3761e69'),      # fd1b585, 77905fc
+                                             (ensemble,3,'57d9de1a75a22de474fa486c670d05e9ebd53cc0c23d99178c852ef906fe4e66'),  # 2fc7b16
+                                             (regime,4,'6669631f8b3ef5c8e5eceaaf81221a25226f8ba9558a8099437e3818379d7abc'),    # b97285e (main)
+                                             (first,5,'a934ee4110f3e3492f856a1203f8c5ce349a1a8a6dae6851166200d2b1134019')):    # 83fc82b
             self.assertEqual(digest(Config(**fields),missing_groups),stored)
 

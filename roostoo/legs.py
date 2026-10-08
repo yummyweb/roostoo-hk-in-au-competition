@@ -4,8 +4,9 @@
   BEAR coin : EMA crossover, short  - short within `ema_fresh_bars` of the fast EMA crossing below the slow one
   CHOP coin : z-score mean reversion - buy at z <= -mr_entry_z, short at z >= +mr_entry_z
 
-Everything is decided once per hour from the completed candle. `decide` is the single implementation: the live runner
-calls it, and the research harness calls it through research/lab/work/live_legs/, so both trade the same rule.
+Entries and the slow exits are decided once per hour from the completed candle. `decide` is the single
+implementation: the live runner calls it, and the research harness calls it through research/lab/work/live_legs/,
+so both trade the same rule. `watch` holds the exits the runner checks every minute on live quotes.
 """
 EMA,MR='ema','mr'
 TIE=1e-9    # prices sit on a tick grid: a close within this (relative) of the trailing level counts as at it
@@ -55,7 +56,7 @@ def decide(features,labels,book,locks,c,bar):
         elif gap<0 and f['age_down']<=c.ema_fresh_bars and labels.get(pair)=='BEAR' and c.allow_short:trend.append((gap,pair,-1))
     for _,pair,side in sorted(trend):                                            # widest gap in ATRs first
         if held[EMA]>=c.top_n:break
-        distance=c.stop_atr*features[pair]['atr_24']/features[pair]['close']
+        distance=c.stop_loss or c.stop_atr*features[pair]['atr_24']/features[pair]['close']
         if not distance>0:continue
         entries.append((pair,side,EMA,min(c.max_position,c.risk_per_trade/distance)))   # the stop loses risk_per_trade of equity
         taken.add(pair);held[EMA]+=1
@@ -69,3 +70,27 @@ def decide(features,labels,book,locks,c,bar):
         if held[MR]>=c.mr_slots:break
         entries.append((pair,side,MR,c.mr_fraction));taken.add(pair);held[MR]+=1
     return exits,entries
+
+
+def watch(book,quotes,c,now,drift):
+    """Exit rules checked every minute on live quotes. Returns [(pair, reason)] for the positions to close now.
+
+    quotes: pair -> {'bid','ask'}. A long is valued at the bid and a short at the ask, the prices it would close at.
+    drift:  pair -> price change over the last c.fast_minutes minutes (absent while that history is still short).
+    Each position's `best` price since entry is updated in place. Profit is counted after the fees of both orders.
+    """
+    cost=2*c.fee_bps/10000;out=[]
+    for pair,p in book.items():
+        q=quotes.get(pair)
+        if not q or not q.get('tradable',True):continue                           # a wide quote is not a price to act on
+        side=p['side'];entry=p['entry'];price=q['bid'] if side>0 else q['ask']
+        best=p['best']=max(p.get('best',entry),price) if side>0 else min(p.get('best',entry),price)
+        move=side*(price/entry-1);peak=side*(best/entry-1);back=side*(best-price)/best
+        settled=now-p.get('opened',0)>=c.fast_minutes*60000                      # the fall that led to the entry is not counted against it
+        if c.stop_loss and move<=-c.stop_loss:reason='stop loss'
+        elif c.profit_trail and peak>cost and back>=c.profit_trail:reason='profit lock'
+        elif c.mr_take_profit and p['leg']==MR and move-cost>=c.mr_take_profit:reason='profit target'
+        elif c.fast_cut and move<0 and settled and side*drift.get(pair,0.)<=-c.fast_cut:reason='fast fall'
+        else:continue
+        out.append((pair,reason))
+    return out
