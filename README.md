@@ -223,44 +223,48 @@ sudoedit /etc/roostoo/roostoo.env
 ```
 
 The live candidate is the team's regime strategy (`rank_model: regime_legs`)
-on 15-minute bars: a regime label per coin decides which rule trades it, long
-or short. Entries are decided when each 15-minute bar closes; exits are also
+on 5-minute bars: a regime label per coin decides which rule trades it, long
+or short. Entries are decided when each 5-minute bar closes; exits are also
 checked every minute on live quotes.
 
 - **Bars.** Roostoo has no candle endpoint, so the runner builds its bars from
   the mid of Roostoo's own quotes for the 65 crypto pairs it quotes
   (`config/universe-crypto.json`; the 21 tokenised stocks are left out, and
-  OMNI and TON are listed without a quote),
-  closing one at the first cycle after each quarter hour. On start each pair's
-  history is filled from Binance 15-minute closes, so a restart does not wait
-  days. `bar_minutes` may be 1, 5, 15, 30 (bars from quotes) or 60 (hourly
-  Binance candles); every window below is counted in bars, 4 to the hour.
+  OMNI and TON are listed without a quote), closing one at the first cycle
+  after each five minutes. On start each pair's history is filled from Binance
+  5-minute closes, so a restart does not wait days. `bar_minutes` may be 1, 5,
+  15, 30 (bars from quotes) or 60 (hourly Binance candles); every window below
+  is counted in bars, 12 to the hour.
 - **Regime.** Each coin is labelled BULL, BEAR or CHOP by a three-state hidden
   Markov model started from K-Means clusters (Haryani, Chandra and Tarigan,
-  2026) on two features, its 12-hour return and the 6-hour volatility of its
-  15-minute returns. One model serves all coins (`config/coin_regime_15m.json`,
+  2026) on two features, its 12-hour return and the 4-hour volatility of its
+  5-minute returns. One model serves all coins (`config/coin_regime_5m.json`,
   fitted by `scripts/fit_bar_regime.py`); the runner applies it with a forward
-  filter, so a label uses only past bars. In the fit BULL coins had risen 4.0%
-  over 12 hours on average, BEAR coins had fallen 3.5%, CHOP coins were quiet.
-- **BULL and BEAR: EMA crossover.** Buy a BULL coin within 2 hours of its
-  4-hour EMA crossing above its 16-hour EMA, short a BEAR coin within 2 hours
-  of the cross below, and only once the fast EMA is at least 0.2% of the price
-  beyond the slow one. At most four positions, the widest gap first, 15% of
-  equity each. Exit when the EMAs cross back; the coin then waits 4 hours.
+  filter, so a label uses only past bars. In the fit BULL coins had risen 4.1%
+  over 12 hours on average, BEAR coins had fallen 3.7%, CHOP coins were quiet.
+- **BULL and BEAR: EMA crossover.** Buy a BULL coin within 40 minutes of its
+  80-minute EMA (16 bars) crossing above its 320-minute EMA (64 bars), short a
+  BEAR coin within 40 minutes of the cross below, and only once the fast EMA
+  is at least 0.2% of the price beyond the slow one. The order is sent only
+  while the price is still moving that way (the momentum test below); until
+  then it waits, at most to the end of the bar. At most four positions, the
+  widest gap first, 15% of equity each. Exit when the EMAs cross back; the
+  coin then waits 80 minutes.
 - **CHOP: z-score mean reversion.** Buy a CHOP coin 2.5 standard deviations
-  below its 24-hour mean and short one 2.5 above; 10% of equity each, at most
-  four. Exit when the price is back across the mean or after 12 hours; the
-  coin then waits 4 hours.
+  below its 8-hour mean and short one 2.5 above; 10% of equity each, at most
+  four. Exit when the price is back across the mean or after 4 hours; the
+  coin then waits 80 minutes.
 - **Every minute, on the live bid (longs) or ask (shorts)** (`legs.watch`).
-  Profit is counted after both fees; momentum is the price change over the
-  last 30 minutes, from the runner's own record of each minute's quotes.
+  Profit is counted after both fees; momentum comes from the runner's own
+  record of each minute's quotes.
   - *Stop-loss*: 2% against the entry price.
+  - *Momentum* (`legs.moving`): a steep move (1% or more the position's way in
+    the last 30 minutes) is judged over those 30 minutes and has to keep 0.3%
+    of it; anything gentler is judged over the last 5 minutes and has to show
+    0.05%, so a stall is seen sooner.
   - *Momentum hold*: a crossover position that is at least 1% in profit, or a
     mean-reversion position at least 1.5% in profit, is held while the price
-    is still moving its way and closed as soon as that move stalls. A steep
-    move (1% or more its way in the last 30 minutes) is judged over those 30
-    minutes and has to keep 0.3% of it; anything gentler is judged over the
-    last 10 minutes and has to show 0.1%, so a stall is seen sooner.
+    is still moving its way and closed as soon as that move stalls.
   - *Profit lock*: once a position has been more than 1% in profit, it is
     closed if the price falls 0.75% from its best since entry.
   - *Fast-fall cut*: a losing position is closed when the price has moved 1.5%
@@ -286,17 +290,17 @@ shorter bars, shorter windows, more coins and selling by momentum (branch `v5`).
 
 `scripts/replay_bars.py` replays the runner itself over recorded candle closes
 (`scripts/fetch_candles.py`), with the same fees and order throttle. On the 12
-days to October 8 the live preset lost 7.8% (worst drop 8.9%), placing 49
-orders a day and paying 0.62% of the account a day in fees; 53% of its trades
-won, the winners averaging +1.3% of the position and the losers -2.0%. With
-the first numbers tried (a 3% stop-loss, a 1.5% profit lock and one 30-minute
-momentum window) it lost 7.6%; with the tighter stop and lock but still one
-window, 10.3%.
-None of some sixty variants replayed on one-minute and 15-minute bars
-(windows from 30 minutes to 24 hours, weaker and stronger entry triggers,
-tighter and wider stops, with and without the momentum rule) made money over
-those days: before costs the average trade earned at most about 0.1% of its
-position, against about 0.3% of fees, spread and slippage per round trip. The team chose to run it.
+days to October 8 the live preset lost 13.5% (worst drop 14.0%), placing 60
+orders a day and paying 0.66% of the account a day in fees; 48% of its trades
+won, the winners averaging +1.0% of the position and the losers -1.5%. The
+15-minute preset it replaced (`config/regime_15m_candidate.json`: 4/16-hour
+EMAs, 24-hour z-score, no momentum test on entries) lost 7.8% over the same
+days. None of some sixty variants replayed on one-minute, 5-minute and
+15-minute bars (windows from 30 minutes to 24 hours, weaker and stronger entry
+triggers, tighter and wider stops, with and without the momentum rules) made
+money over those days: before costs the average trade earned at most about
+0.1% of its position, against about 0.3% of fees, spread and slippage per
+round trip. The team chose to run it.
 
 Every window of the hourly preset except the two regime features came from the October 7 study
 ([`research/`](research/README.md)); the regime windows were chosen on the

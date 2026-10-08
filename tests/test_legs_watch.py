@@ -130,6 +130,16 @@ class RunnerWatchTests(unittest.TestCase):
         for _ in range(16):self.assertIsNone(self.step(r)['done'])
         self.price('A/USD',98.9);status=self.step(r);self.assertEqual((status['done'],status['why']),('SELL A/USD','fast fall'))
 
+    def test_a_trend_entry_waits_in_the_queue_until_the_price_is_moving_its_way(self):
+        r=self.runner(replace(W,profit_arm=.006,ride=.003,fast_minutes=30,ride_short_minutes=10,ride_steep=.01))
+        self.decide_hour(r,dict(self.FLAT,**{'A/USD':row(age_up=3),'B/USD':row(**DOWN),'D/USD':row(z=-3.2)}),{'A/USD':'BULL','B/USD':'BEAR','D/USD':'CHOP'})
+        first=self.step(r);self.assertEqual((first['done'],first['queued']),('BUY D/USD',2))            # the dip-buy needs no momentum
+        waited=[self.step(r) for _ in range(9)]                                                         # flat prices: neither trend entry is sent
+        self.assertEqual([(s['done'],s['queued']) for s in waited],[(None,2)]*9)
+        self.price('B/USD',100.4);self.assertIsNone(self.step(r)['done'])                               # rising: still no short, and A has not moved
+        self.price('A/USD',100.3);self.assertEqual(self.step(r)['done'],'BUY A/USD')
+        self.price('B/USD',99.8);self.assertEqual(self.step(r)['done'],'SHORT B/USD')                   # lower than ten minutes ago
+
     def test_the_runner_measures_both_windows_from_its_own_minute_prices(self):
         r=self.runner(replace(W,fast_minutes=30,ride_short_minutes=10));self.decide_hour(r,self.FLAT,{})
         for minute in range(9):

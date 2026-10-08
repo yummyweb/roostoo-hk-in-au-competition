@@ -74,6 +74,16 @@ def decide(features,labels,book,locks,c,bar):
     return exits,entries
 
 
+def moving(c,side,pair,drift,quick=None):
+    """True while the price is still moving `side`'s way, False once that move has stalled, None while the runner's
+    price record is too short to say. A steep move (`ride_steep` over fast_minutes) is judged over fast_minutes and
+    must keep `ride`; anything gentler is judged over ride_short_minutes, with `ride` scaled to that window."""
+    wave=side*drift[pair] if pair in drift else None;need=c.ride
+    if c.ride_short_minutes and not (wave is not None and wave>=c.ride_steep):
+        wave=side*quick[pair] if quick and pair in quick else None;need=c.ride*c.ride_short_minutes/c.fast_minutes
+    return None if wave is None else wave>=need
+
+
 def watch(book,quotes,c,now,drift,quick=None):
     """Exit rules checked every minute on live quotes. Returns [(pair, reason)] for the positions to close now.
 
@@ -84,8 +94,7 @@ def watch(book,quotes,c,now,drift,quick=None):
 
     Momentum decides when a profit is taken: while the price is still moving the position's way (`ride`) a winner is
     held; once that move stalls, a mean-reversion position at its target and a trend position past `profit_arm` are
-    closed. A steep move (`ride_steep` over fast_minutes) is judged over fast_minutes, anything gentler over the
-    shorter window. The profit lock stays underneath as the limit on what a real profit may give back.
+    closed (see `moving`). The profit lock stays underneath as the limit on what a real profit may give back.
     """
     cost=2*c.fee_bps/10000;out=[]
     for pair,p in book.items():
@@ -95,15 +104,12 @@ def watch(book,quotes,c,now,drift,quick=None):
         best=p['best']=max(p.get('best',entry),price) if side>0 else min(p.get('best',entry),price)
         move=side*(price/entry-1);peak=side*(best/entry-1);back=side*(best-price)/best
         settled=now-p.get('opened',0)>=c.fast_minutes*60000                      # the fall that led to the entry is not counted against it
-        wave=side*drift[pair] if pair in drift else None                         # how far the price went the position's way lately
-        need=c.ride
-        if c.ride_short_minutes and not (wave is not None and wave>=c.ride_steep):   # not a steep move: look at the shorter window
-            wave=side*quick[pair] if quick and pair in quick else None;need=c.ride*c.ride_short_minutes/c.fast_minutes
-        riding=bool(c.ride) and wave is not None and wave>=need
+        still=moving(c,side,pair,drift,quick) if c.ride else None                # is the price still going the position's way
+        riding=still is True
         if c.stop_loss and move<=-c.stop_loss:reason='stop loss'
         elif c.profit_trail and peak-cost>c.profit_arm and back>=c.profit_trail:reason='profit lock'
         elif c.mr_take_profit and p['leg']==MR and move-cost>=c.mr_take_profit and not riding:reason='profit target'
-        elif c.ride and p['leg']==EMA and wave is not None and move-cost>=c.profit_arm and not riding:reason='momentum faded'
+        elif p['leg']==EMA and still is False and move-cost>=c.profit_arm:reason='momentum faded'
         elif c.fast_cut and move<0 and settled and side*drift.get(pair,0.)<=-c.fast_cut:reason='fast fall'
         else:continue
         out.append((pair,reason))

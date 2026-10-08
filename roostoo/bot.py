@@ -18,7 +18,7 @@ from urllib.request import urlopen
 from .api import Client,APIError
 from .allocation import allocation_targets,brake_scale,breakout_targets
 from .data import Bar
-from .legs import decide,watch
+from .legs import decide,moving,watch
 from .ranking import LOOKBACK,trend_frame
 from .regime_hmm import RegimeFilter
 from .rules import load_rules
@@ -536,7 +536,8 @@ class Runner:
             state['legs_bar']=bar
             if hourly or state['queue']:   # a minute decision that changes nothing is not journaled
                 self.log({'event':'decision','timestamp':now,'bar':bar,'refresh_seconds':refresh_seconds,'labels':self.labels,'queue':state['queue']})
-        for pair,reason in watch(book,quotes,self.c,now,*self.drift(quotes,now)):  # every minute: stop-loss, profit lock, profit target, fast fall
+        waves=self.drift(quotes,now)
+        for pair,reason in watch(book,quotes,self.c,now,*waves):  # every minute: stop-loss, profit lock, profit target, fast fall
             if any(a['pair']==pair and a['action'] in CLOSING for a in state['queue']):continue
             p=book[pair];state['queue']=[a for a in state['queue'] if a['pair']!=pair]
             state['queue'].insert(0,{'pair':pair,'action':'SELL' if p['side']>0 else 'COVER','reason':reason})
@@ -558,6 +559,8 @@ class Runner:
         if now-state['last_submit']>=60000:                                       # one order per minute for the whole account
             for action in list(state['queue']):
                 if not quotes[action['pair']].get('tradable',True):continue
+                # A trend entry is sent only while the price is moving its way; one that arrives after the move waits in the queue.
+                if self.c.ride and action.get('leg')=='ema' and not moving(self.c,1 if action['action']=='BUY' else -1,action['pair'],*waves):continue
                 state['queue'].remove(action);done=dict(action,filled=self.act(action,account,quotes,now))
                 if done['filled'] or state['last_submit']==now:break                # a request went out; an action skipped unsent does not use the minute
         counts={k:sum(1 for v in self.labels.values() if v==k) for k in ('BULL','BEAR','CHOP')}

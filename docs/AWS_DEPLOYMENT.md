@@ -51,11 +51,11 @@ other AWS services or launch another instance.
 Use `ROOSTOO_UNIVERSE_CONFIG=/opt/roostoo/config/universe-crypto.json` for the
 65 crypto pairs Roostoo quotes (`universe-50.json` is the earlier 50-pair set).
 The default `config/live_candidate.json` runs the team's regime strategy on
-15-minute bars: each coin is labelled BULL, BEAR or CHOP every quarter hour;
-BULL and BEAR coins trade the 4/16-hour EMA crossover (long and short), CHOP
-coins trade 24-hour z-score mean reversion both ways, and every position is
-checked each minute against a stop-loss, a momentum rule and a profit lock. It
-fills each pair's history from Binance 15-minute closes when it starts, then
+5-minute bars: each coin is labelled BULL, BEAR or CHOP every five minutes;
+BULL and BEAR coins trade the 80/320-minute EMA crossover (long and short),
+CHOP coins trade 8-hour z-score mean reversion both ways, and every position
+is checked each minute against a stop-loss, a momentum rule and a profit lock.
+It fills each pair's history from Binance 5-minute closes when it starts, then
 builds its bars from Roostoo's own quotes, so verify the pair list and wallet
 before any live activation.
 
@@ -84,7 +84,7 @@ sudo systemctl show roostoo-bot -p ExecStart -p ActiveState -p SubState
   account in positions), `"ready"` (coins with enough history to trade), `"brake"` (true while the loss brake blocks new
   entries), `"queued"` (orders waiting for their minute), `"done"` (the order
   sent this cycle) and `"why"` (its reason, for example `profit lock` or
-  `stop loss`). Entries are decided each quarter hour and exits are checked
+  `stop loss`). Entries are decided every five minutes and exits are checked
   every minute; `"done": null` means nothing needed doing that minute.
 - `Cycle blocked:` or a startup traceback identifies an execution/data error.
   Missing credentials, a starting cash mismatch, stale quotes and an unresolved

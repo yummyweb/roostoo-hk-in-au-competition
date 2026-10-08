@@ -107,8 +107,8 @@ P&L by leg over the four periods: EMA longs -$4k / +$4k / +$8k / -$11k, EMA shor
 mean-reversion longs -$3k / -$1k / +$3k / -$3k, mean-reversion shorts -$4k / -$2k / -$8k / -$7k.
 Reproduce with `ROOSTOO_REPO=$PWD .venv-lstm/bin/python research/lab/work/live_legs/periods.py` (run from
 `research/lab`). These numbers are for `config/regime_hourly_candidate.json`. The live preset has since gained exits
-checked every minute, larger positions, looser entries and a loss brake, and then moved to 15-minute bars with
-windows about ten times shorter (root README). None of that was run in this harness, which works on hourly
+checked every minute, larger positions, looser entries and a loss brake, and then moved to 15-minute and then
+5-minute bars with far shorter windows (root README). None of that was run in this harness, which works on hourly
 candles; `scripts/replay_bars.py` replays the runner itself on recorded 5-minute closes instead, and its result
 for the live preset is in the root README.
 

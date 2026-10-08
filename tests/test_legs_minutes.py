@@ -87,7 +87,7 @@ class MinuteTests(unittest.TestCase):
         root=Path(__file__).resolve().parents[1]
         hourly=Config(**json.loads((root/'config/regime_hourly_exits_candidate.json').read_text()))
         live=Config(**json.loads((root/'config/live_candidate.json').read_text()))
-        self.assertEqual((live.bar_minutes,live.rank_model,live.ride>0,live.profit_arm>0),(15,'regime_legs',True,True))
+        self.assertEqual((live.bar_minutes,live.rank_model,live.ride>0,live.profit_arm>0),(5,'regime_legs',True,True))
         logged={k:v for k,v in asdict(hourly).items() if k not in ('bar_minutes','ema_min_gap','profit_arm','ride','ride_short_minutes','ride_steep')}       # written before those fields existed
         book={'SOL/USD':dict(leg='mr',side=1,entry=100.,bar=497630,high=101.,low=99.,level=95.,best=100.5,opened=5)}
         state=dict(Runner(hourly,self.path,FakeClient(),False).state,config_hash=digest(hourly,2),cash=95000.,inventory={'SOL/USD':50.},
@@ -97,7 +97,7 @@ class MinuteTests(unittest.TestCase):
         migrate(self.path,live,root/'config/universe-crypto.json',False,client)
         moved=json.loads(self.path.read_text());position=moved['book']['SOL/USD']
         self.assertEqual((moved['config_hash'],moved['locks'],moved['fills'],position['level']),(digest(live),{},70,None))
-        self.assertAlmostEqual(position['bar'],time.time()*1000//(15*MINUTE),delta=1)
+        self.assertAlmostEqual(position['bar'],time.time()*1000//(5*MINUTE),delta=1)
         self.assertEqual({k:position[k] for k in ('leg','side','entry','best')},{'leg':'mr','side':1,'entry':100.,'best':100.5})
         Runner(live,self.path,FakeClient())                                                            # the migrated ledger opens under the live preset
 
