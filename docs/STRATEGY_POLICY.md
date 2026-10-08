@@ -86,7 +86,7 @@ and a 2% loss brake, and then moved the strategy to shorter bars built from
 Roostoo's quotes, first 15-minute and then 5-minute (80/320-minute EMAs,
 8-hour z-score, all 65 quoted crypto pairs, entries and profit-taking tied to
 momentum, and from branch `v7` trend entries on a pullback plus a steep-drop
-buy). A replay of the runner over the 12 days to October 8 lost 12.3% for the
+buy). A replay of the runner over the 12 days to October 8 lost 15.6% for the
 live preset, 13.5% on 5-minute bars before those entries and 7.8% on 15-minute
 bars, and no replayed variant made money (README). The four-slot breakout rotation with ATR trailing stops, the
 only family positive in every held-back period of the October 7 study, stays

@@ -275,9 +275,11 @@ checked every minute on live quotes.
     mean-reversion position at least 1.5% in profit, is held while the price
     is still moving its way and closed as soon as that move stalls.
   - *Profit lock*: once a position has been more than 1% in profit, it is
-    closed if the price falls 0.75% from its best since entry.
-  - *Fast-fall cut*: a losing position is closed when the price has moved 1.5%
-    against it within 30 minutes.
+    closed as soon as its unrealised profit is 0.75% below the best it has
+    been (a profit of 200 is closed at 198.50), which in practice is the first
+    tick back.
+  - *Fast-fall cut*: a losing position at least 10 minutes old is closed when
+    the price has moved 1.5% against it within 30 minutes.
 - **Loss brake.** While equity is 2% or more below its highest value of the
   last 24 hours nothing new is opened; open positions keep their own exits.
 
@@ -299,9 +301,11 @@ shorter bars, shorter windows, more coins and selling by momentum (branch `v5`).
 
 `scripts/replay_bars.py` replays the runner itself over recorded candle closes
 (`scripts/fetch_candles.py`), with the same fees and order throttle. On the 12
-days to October 8 the live preset lost 12.3% (worst drop 12.5%), placing 54
-orders a day and paying 0.66% of the account a day in fees; 45% of its trades
-won, the winners averaging +1.1% of the position and the losers -1.5%. The
+days to October 8 the live preset lost 15.6% (worst drop 15.6%), placing 68
+orders a day and paying 0.81% of the account a day in fees; 45% of its trades
+won, the winners averaging +1.0% of the position and the losers -1.4%. With
+the profit lock measured on the price (0.75% off the best price) and the
+fast-fall cut waiting 30 minutes it lost 12.3%. The
 5-minute preset before the pullback and steep-drop entries (fresh EMA cross,
 sent only while the price was still moving that way) lost 13.5%, and the
 15-minute preset before that (`config/regime_15m_candidate.json`: 4/16-hour

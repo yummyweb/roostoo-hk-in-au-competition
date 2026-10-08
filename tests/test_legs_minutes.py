@@ -88,9 +88,9 @@ class MinuteTests(unittest.TestCase):
         hourly=Config(**json.loads((root/'config/regime_hourly_exits_candidate.json').read_text()))
         live=Config(**json.loads((root/'config/live_candidate.json').read_text()))
         self.assertEqual((live.bar_minutes,live.rank_model,live.ride>0,live.profit_arm>0),(5,'regime_legs',True,True))
-        logged={k:v for k,v in asdict(hourly).items() if k not in ('bar_minutes','ema_min_gap','profit_arm','ride','ride_short_minutes','ride_steep','pullback','crash_drop','crash_take_profit','crash_ride','crash_guard')}       # written before those fields existed
+        logged={k:v for k,v in asdict(hourly).items() if k not in ('bar_minutes','ema_min_gap','profit_arm','ride','ride_short_minutes','ride_steep','pullback','crash_drop','crash_take_profit','crash_ride','crash_guard','profit_giveback','fast_wait_minutes')}       # written before those fields existed
         book={'SOL/USD':dict(leg='mr',side=1,entry=100.,bar=497630,high=101.,low=99.,level=95.,best=100.5,opened=5)}
-        state=dict(Runner(hourly,self.path,FakeClient(),False).state,config_hash=digest(hourly,3),cash=95000.,inventory={'SOL/USD':50.},
+        state=dict(Runner(hourly,self.path,FakeClient(),False).state,config_hash=digest(hourly,4),cash=95000.,inventory={'SOL/USD':50.},
                    book=book,locks={'ETH/USD':497640},fills=70)
         save_state(self.path,state);self.path.with_suffix('.jsonl').write_text(json.dumps({'event':'start','config':logged})+'\n')
         client=Mock();client.exchange_info.return_value=json.loads((root/'config/exchange_info.json').read_text())

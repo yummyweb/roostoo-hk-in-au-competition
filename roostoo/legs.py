@@ -118,12 +118,12 @@ def watch(book,quotes,c,now,drift,quick=None):
         side=p['side'];entry=p['entry'];price=q['bid'] if side>0 else q['ask']
         best=p['best']=max(p.get('best',entry),price) if side>0 else min(p.get('best',entry),price)
         move=side*(price/entry-1);peak=side*(best/entry-1);back=side*(best-price)/best
-        settled=now-p.get('opened',0)>=c.fast_minutes*60000                      # the fall that led to the entry is not counted against it
+        settled=now-p.get('opened',0)>=(c.fast_wait_minutes or c.fast_minutes)*60000   # a position this young is left to its stop-loss
         still=moving(c,side,pair,drift,quick) if c.ride else None                # is the price still going the position's way
         riding=still is True
         surge=bool(c.crash_ride) and bool(quick) and pair in quick and side*quick[pair]>=c.crash_ride   # very strong momentum
         if c.stop_loss and move<=-c.stop_loss:reason='stop loss'
-        elif c.profit_trail and peak-cost>c.profit_arm and back>=c.profit_trail:reason='profit lock'
+        elif peak-cost>c.profit_arm and ((c.profit_trail and back>=c.profit_trail) or (c.profit_giveback and move<=peak*(1-c.profit_giveback))):reason='profit lock'
         elif c.mr_take_profit and p['leg']==MR and move-cost>=c.mr_take_profit and not riding:reason='profit target'
         elif c.crash_take_profit and p['leg']==CRASH and move-cost>=c.crash_take_profit and not surge:reason='profit target'
         elif c.crash_guard and p['leg']==CRASH and peak>=c.crash_guard and move<=0:reason='back to entry'

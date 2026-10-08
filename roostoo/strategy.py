@@ -66,6 +66,9 @@ class Config:
     stop_loss: float = 0.0          # close a position this far against its entry price
     profit_trail: float = 0.0       # once a position has been in profit after fees, close it this far off its best price
     profit_arm: float = 0.0         # the profit after fees a position must first reach before that lock applies
+    profit_giveback: float = 0.0    # the lock measured on the profit instead: close once the unrealised profit is this
+                                    # fraction below the best it has been (0.0075: a profit of 200 is closed at 198.50)
+    fast_wait_minutes: int = 0      # age a position needs before the fast-fall cut applies (0: fast_minutes)
     ride: float = 0.0               # a profitable position is held while the price has moved this far its way in the last
                                     # fast_minutes; once the move stalls the profit is taken (0: no momentum rule)
     # A steep move is judged over all of fast_minutes, a gentle one over a shorter window so a stall is seen sooner: when
@@ -125,6 +128,8 @@ class Config:
             raise ValueError('Invalid live exit configuration')
         if self.bar_minutes not in (1,5,15,30,60) or type(self.bar_minutes) is not int or not 0 <= self.ema_min_gap < 1 or not 0 <= self.profit_arm < 1 or not 0 <= self.ride < 1:
             raise ValueError('bar_minutes must be 1, 5, 15, 30 or 60; ema_min_gap, profit_arm and ride are fractions')
+        if not 0 <= self.profit_giveback < 1 or type(self.fast_wait_minutes) is not int or not 0 <= self.fast_wait_minutes <= 120:
+            raise ValueError('profit_giveback is a fraction of the profit; fast_wait_minutes is a whole number of minutes')
         if any(not 0 <= v < 1 for v in (self.pullback,self.crash_drop,self.crash_take_profit,self.crash_ride,self.crash_guard)):
             raise ValueError('pullback and the steep-drop settings are fractions of the price')
         if type(self.ride_short_minutes) is not int or not 0 <= self.ride_short_minutes < self.fast_minutes or not 0 <= self.ride_steep < 1:

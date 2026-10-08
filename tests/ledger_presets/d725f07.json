@@ -40,7 +40,7 @@
   "mr_stop": 0.2,
   "mr_cooldown_bars": 16,
   "stop_loss": 0.02,
-  "profit_trail": 0.0,
+  "profit_trail": 0.0075,
   "mr_take_profit": 0.015,
   "fast_cut": 0.015,
   "fast_minutes": 30,
@@ -54,7 +54,5 @@
   "crash_drop": 0.02,
   "crash_take_profit": 0.01,
   "crash_ride": 0.005,
-  "crash_guard": 0.005,
-  "profit_giveback": 0.0075,
-  "fast_wait_minutes": 10
+  "crash_guard": 0.005
 }
