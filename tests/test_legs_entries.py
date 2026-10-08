@@ -97,4 +97,23 @@ class RunnerEntryTests(unittest.TestCase):
         self.assertEqual(r.state['locks']['A/USD'],1000+C.mr_cooldown_bars)
 
 
+    def test_sharpe_and_sortino_come_from_utc_daily_equity_and_are_kept_in_the_state_and_the_log(self):
+        import json,math,statistics
+        from roostoo.metrics import ratios
+        values=[100000.,101000.,99990.,100989.9];returns=[.01,-.01,.01]
+        got=ratios(values);mean=statistics.mean(returns)
+        self.assertAlmostEqual(got['sharpe'],mean/statistics.stdev(returns)*math.sqrt(365))
+        self.assertAlmostEqual(got['sortino'],mean/math.sqrt(.01**2/3)*math.sqrt(365));self.assertEqual(got['days'],3)
+        self.assertEqual((ratios([100000.,101000.]),ratios([100000.,101000.,102010.])['sortino']),({'sharpe':None,'sortino':None,'days':1},None))
+        day=lambda k:(1000*HOUR//86400000+k)*86400000                                              # the test clock's day and the days before
+        journal=[{'event':'snapshot','timestamp':day(-2)+5,'equity':99000.,'quotes':{}},{'event':'snapshot','timestamp':day(-2)+9,'equity':101000.},
+                 {'event':'start','timestamp':day(-1)},{'event':'snapshot','timestamp':day(-1)+7,'equity':99990.,'book':{}}]
+        self.path.with_suffix('.jsonl').write_text(''.join(json.dumps(event)+'\n' for event in journal))
+        r=self.runner(KW);self.assertEqual(r.state['daily'],{str(day(-2)//86400000):101000.,str(day(-1)//86400000):99990.})   # the last value of each day
+        self.decide_hour(r,self.FLAT,{});r.state['cash']=100989.9;status=self.step(r)
+        self.assertEqual((status['sharpe'],status['sortino']),(round(got['sharpe'],2),round(got['sortino'],2)))
+        saved=[json.loads(line) for line in self.path.with_suffix('.jsonl').read_text().splitlines()][-1]
+        self.assertEqual((saved['event'],saved['sharpe'],saved['days'],r.state['daily'][str(day(0)//86400000)]),('snapshot',status['sharpe'],3,100989.9))
+
+
 if __name__=='__main__':unittest.main()

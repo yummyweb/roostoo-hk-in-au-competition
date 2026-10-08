@@ -6,6 +6,16 @@ DAY = 86_400_000
 YEAR = 365 * DAY
 
 
+def ratios(values):
+    """Annualised Sharpe and Sortino ratios of day-end equities, the starting equity first; None until two daily returns exist."""
+    returns = [b/a-1 for a,b in zip(values,values[1:]) if a>0]
+    if len(returns) < 2: return {'sharpe':None,'sortino':None,'days':len(returns)}
+    mean = statistics.mean(returns); vol = statistics.stdev(returns)
+    downside = math.sqrt(sum(min(0,r)**2 for r in returns)/len(returns))
+    return {'sharpe':mean/vol*math.sqrt(365) if vol>1e-12 else None,
+            'sortino':mean/downside*math.sqrt(365) if downside>1e-12 else None,'days':len(returns)}
+
+
 def summarize(curve, trades, orders, initial):
     equity = [x['equity'] for x in curve]
     daily = {}
