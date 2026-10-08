@@ -123,19 +123,6 @@ class RunnerWatchTests(unittest.TestCase):
         self.assertEqual((status['brake'],status['done'],list(r.state['book'])),(True,None,['A/USD']))
         self.now=1030*HOUR;self.decide_hour(r,self.FLAT,{});self.assertFalse(self.step(r)['brake'])      # the old high has aged out of the window
 
-    def test_the_no_shorts_switch_file_covers_every_short_and_opens_none_until_it_is_removed(self):
-        r=self.runner();short=lambda:dict(self.FLAT,**{'A/USD':row(**DOWN),'B/USD':row(**DOWN),'D/USD':row(z=-3.2)})
-        labels={'A/USD':'BEAR','B/USD':'BEAR','D/USD':'CHOP'}
-        self.decide_hour(r,short(),labels)
-        self.assertEqual(sorted(self.step(r)['done'] for _ in range(3)),['BUY D/USD','SHORT A/USD','SHORT B/USD'])
-        switch=self.path.with_suffix('.no-shorts');switch.write_text('')
-        done=[self.step(r) for _ in range(3)]
-        self.assertEqual(sorted((s['done'],s['why']) for s in done[:2]),[('COVER A/USD','shorts switched off'),('COVER B/USD','shorts switched off')])
-        self.assertEqual((done[2]['done'],r.state['shorts'],list(r.state['book'])),(None,{},['D/USD']))       # the long is untouched
-        self.now=1001*HOUR;self.decide_hour(r,short(),labels);self.assertIsNone(self.step(r)['done'])       # no new short while the file is there
-        switch.unlink();self.now=1002*HOUR;self.decide_hour(r,short(),labels)
-        self.assertIn(self.step(r)['done'],('SHORT A/USD','SHORT B/USD'))
-
     def test_positions_opened_under_the_hourly_rules_keep_their_book_and_come_under_the_new_exits(self):
         from roostoo.migrate_state import digest,migrate
         root=Path(__file__).resolve().parents[1]

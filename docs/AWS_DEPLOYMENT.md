@@ -100,16 +100,6 @@ sudo systemctl show roostoo-bot -p ExecStart -p ActiveState -p SubState
   `"done"` or an error. The breakout and ensemble presets print `"pending"`
   instead.
 
-To have the regime runner close every short and open no new ones, create the
-switch file next to the ledger; no restart is needed. It covers one short per
-minute and keeps doing so while the file exists. Remove the file to allow
-shorts again.
-
-```sh
-sudo touch /opt/roostoo/runs/aws/state.no-shorts   # cover all shorts, open none
-sudo rm /opt/roostoo/runs/aws/state.no-shorts      # shorts allowed again
-```
-
 Rerunning `aws_start.sh` now restarts the service so updated code, environment,
 and unit arguments take effect. Previously, `systemctl enable --now` left an
 already running bot on its old settings.

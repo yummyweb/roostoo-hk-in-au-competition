@@ -85,7 +85,7 @@ stop-loss, 1% profit lock, 1% mean-reversion profit target), larger positions
 and a 2% loss brake, and then moved the strategy to 15-minute bars built from
 Roostoo's quotes (4/16-hour EMAs, 24-hour z-score, all 65 quoted crypto pairs,
 profits taken when momentum stalls). A replay of the runner over the 12 days
-to October 8 lost 7.6%, and no replayed variant made money (README). The four-slot breakout rotation with ATR trailing stops, the
+to October 8 lost 10.3%, and no replayed variant made money (README). The four-slot breakout rotation with ATR trailing stops, the
 only family positive in every held-back period of the October 7 study, stays
 available as `config/breakout_candidate.json`; the strength-gated trend ensemble with a gradual
 drawdown brake remains the supported lower-risk preset. Any promotion

@@ -254,13 +254,13 @@ checked every minute on live quotes.
 - **Every minute, on the live bid (longs) or ask (shorts)** (`legs.watch`).
   Profit is counted after both fees; momentum is the price change over the
   last 30 minutes, from the runner's own record of each minute's quotes.
-  - *Stop-loss*: 3% against the entry price.
+  - *Stop-loss*: 2% against the entry price.
   - *Momentum hold*: a crossover position that is at least 1% in profit, or a
     mean-reversion position at least 1.5% in profit, is held while the price
     has moved 0.3% or more its way in the last 30 minutes, and closed as soon
     as that move stalls.
   - *Profit lock*: once a position has been more than 1% in profit, it is
-    closed if the price falls 1.5% from its best since entry.
+    closed if the price falls 0.75% from its best since entry.
   - *Fast-fall cut*: a losing position is closed when the price has moved 1.5%
     against it within 30 minutes.
 - **Loss brake.** While equity is 2% or more below its highest value of the
@@ -284,13 +284,15 @@ shorter bars, shorter windows, more coins and selling by momentum (branch `v5`).
 
 `scripts/replay_bars.py` replays the runner itself over recorded candle closes
 (`scripts/fetch_candles.py`), with the same fees and order throttle. On the 12
-days to October 8 the live preset lost 7.6% (worst drop 9.5%), placing 45
-orders a day and paying 0.58% of the account a day in fees; 48% of its trades
-won, the winners averaging +1.6% of the position and the losers -1.9%. None of some sixty variants replayed on one-minute and 15-minute bars
+days to October 8 the live preset lost 10.3% (worst drop 11.1%), placing 48
+orders a day and paying 0.58% of the account a day in fees; 52% of its trades
+won, the winners averaging +1.2% of the position and the losers -2.0%. With
+the first numbers tried, a 3% stop-loss and a 1.5% profit lock, it lost 7.6%.
+None of some sixty variants replayed on one-minute and 15-minute bars
 (windows from 30 minutes to 24 hours, weaker and stronger entry triggers,
 tighter and wider stops, with and without the momentum rule) made money over
-those days: before costs the average trade earned under 0.1% of its position,
-against about 0.3% of fees, spread and slippage per round trip. The team chose to run it.
+those days: before costs the average trade earned at most about 0.1% of its
+position, against about 0.3% of fees, spread and slippage per round trip. The team chose to run it.
 
 Every window of the hourly preset except the two regime features came from the October 7 study
 ([`research/`](research/README.md)); the regime windows were chosen on the

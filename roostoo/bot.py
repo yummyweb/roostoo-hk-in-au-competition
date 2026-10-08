@@ -524,10 +524,8 @@ class Runner:
         else:marks.append([hour,account['equity']])
         state['equity_marks']=marks                                               # the loss brake: nothing new is opened this far below the recent high
         braked=self.c.drawdown_brake>0 and account['equity']<=max(m[1] for m in marks)*(1-self.c.drawdown_brake)
-        # Operator switch: while <state>.no-shorts exists the runner covers every short it holds and opens none.
-        flat=self.path.with_suffix('.no-shorts').exists()
         if self.feature_hour==now//span and state.get('legs_bar')!=bar:
-            exits,entries=decide(self.features,self.labels,book,state['locks'],replace(self.c,allow_short=False) if self.no_shorts or flat else self.c,bar)
+            exits,entries=decide(self.features,self.labels,book,state['locks'],replace(self.c,allow_short=False) if self.no_shorts else self.c,bar)
             carried=[a for a in state['queue'] if a['action'] in CLOSING and a['pair'] in book and a['pair'] not in exits]   # an exit not yet sent still stands
             state['queue']=carried+[{'pair':p,'action':'SELL' if book[p]['side']>0 else 'COVER','reason':f"{book[p]['leg']} exit"} for p in exits]
             state['queue']+=[{'pair':p,'action':'BUY' if side>0 else 'SHORT','leg':leg,'weight':weight,
@@ -541,10 +539,6 @@ class Runner:
             state['queue'].insert(0,{'pair':pair,'action':'SELL' if p['side']>0 else 'COVER','reason':reason})
             state['locks'][pair]=now//span+(self.c.cooldown_bars if p['leg']=='ema' else self.c.mr_cooldown_bars)
             self.log({'event':'exit_signal','timestamp':now,'pair':pair,'reason':reason,'leg':p['leg'],'side':p['side'],'entry':p['entry'],'best':p['best'],'quote':quotes[pair]})
-        if flat:
-            waiting={a['pair'] for a in state['queue'] if a['action']=='COVER'}
-            state['queue']=[{'pair':p,'action':'COVER','reason':'shorts switched off'} for p,v in book.items() if v['side']<0 and p not in waiting] \
-                           +[a for a in state['queue'] if a['action']!='SHORT']
         if state.get('legs_bar')!=bar or state['halted'] or braked:               # an entry is good only in the hour after its candle, never after a halt or under the brake
             state['queue']=[a for a in state['queue'] if a['action'] in CLOSING]
         if state['halted']:                                                       # a halt closes everything, with or without candles
