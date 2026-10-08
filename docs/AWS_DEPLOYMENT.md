@@ -52,7 +52,8 @@ Use `ROOSTOO_UNIVERSE_CONFIG=/opt/roostoo/config/universe-crypto.json` for the
 65 crypto pairs Roostoo quotes (`universe-50.json` is the earlier 50-pair set).
 The default `config/live_candidate.json` runs the team's regime strategy on
 5-minute bars: each coin is labelled BULL, BEAR or CHOP every five minutes;
-BULL and BEAR coins trade the 80/320-minute EMA crossover (long and short),
+BULL and BEAR coins trade the 80/320-minute EMA trend, entered on a pullback
+(long and short), a BEAR coin that drops 2% in one bar is bought for a bounce,
 CHOP coins trade 8-hour z-score mean reversion both ways, and every position
 is checked each minute against a stop-loss, a momentum rule and a profit lock.
 It fills each pair's history from Binance 5-minute closes when it starts, then

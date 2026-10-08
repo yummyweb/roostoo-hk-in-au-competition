@@ -560,11 +560,12 @@ class Runner:
             for action in list(state['queue']):
                 if not quotes[action['pair']].get('tradable',True):continue
                 # A trend entry is sent only while the price is moving its way; one that arrives after the move waits in the queue.
-                if self.c.ride and action.get('leg')=='ema' and not moving(self.c,1 if action['action']=='BUY' else -1,action['pair'],*waves):continue
+                if self.c.ride and not self.c.pullback and action.get('leg')=='ema' and not moving(self.c,1 if action['action']=='BUY' else -1,action['pair'],*waves):continue
                 state['queue'].remove(action);done=dict(action,filled=self.act(action,account,quotes,now))
                 if done['filled'] or state['last_submit']==now:break                # a request went out; an action skipped unsent does not use the minute
         counts={k:sum(1 for v in self.labels.values() if v==k) for k in ('BULL','BEAR','CHOP')}
         held={f"{leg}_{'long' if side>0 else 'short'}":sum(1 for p in book.values() if p['leg']==leg and p['side']==side) for leg in ('ema','mr') for side in (1,-1)}
+        if self.c.crash_drop:held['crash_long']=sum(1 for p in book.values() if p['leg']=='crash')
         invested=(sum(q*quotes[p]['bid'] for p,q in account['longs'].items())+sum(s['value'] for s in account['shorts'].values()))/account['equity'] if account['equity']>0 else 0.
         self.log({'event':'snapshot','timestamp':now,'equity':account['equity'],'cash':account['cash'],'halted':state['halted'],'brake':braked,
                   'invested':invested,'regimes':counts,'book':book,'queue':state['queue'],'done':done,'candle_error':candle_error})

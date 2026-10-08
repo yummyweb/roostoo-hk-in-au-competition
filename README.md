@@ -242,14 +242,23 @@ checked every minute on live quotes.
   fitted by `scripts/fit_bar_regime.py`); the runner applies it with a forward
   filter, so a label uses only past bars. In the fit BULL coins had risen 4.1%
   over 12 hours on average, BEAR coins had fallen 3.7%, CHOP coins were quiet.
-- **BULL and BEAR: EMA crossover.** Buy a BULL coin within 40 minutes of its
-  80-minute EMA (16 bars) crossing above its 320-minute EMA (64 bars), short a
-  BEAR coin within 40 minutes of the cross below, and only once the fast EMA
-  is at least 0.2% of the price beyond the slow one. The order is sent only
-  while the price is still moving that way (the momentum test below); until
-  then it waits, at most to the end of the bar. At most four positions, the
-  widest gap first, 15% of equity each. Exit when the EMAs cross back; the
-  coin then waits 80 minutes.
+- **BULL and BEAR: trend, entered on a pullback.** A trend entry right after a
+  sharp move arrives late, so the trend leg waits for a move against the
+  trend. A BEAR coin whose 80-minute EMA (16 bars) is at least 0.2% of the
+  price below its 320-minute EMA (64 bars) is shorted once it has bounced 1% or
+  more over the last 30 minutes; a BULL coin with the fast EMA above the slow
+  one is bought once it has dipped 1% or more. The largest counter-move goes
+  first; at most four positions, 15% of equity each. Because the entry is made
+  against the short-term move, the EMAs crossing back does not close it; it is
+  closed after four hours if no other exit has, and the coin then waits 80
+  minutes.
+- **BEAR: steep-drop buy.** A BEAR coin whose 5-minute bar closes 2% or more
+  below the previous close is bought, 10% of equity, sharing the four
+  mean-reversion slots. It is sold as soon as it is 1% in profit after fees,
+  unless the price has risen 0.5% or more in the last five minutes, in which
+  case it is held; once it has been 0.5% above its entry it is sold if it
+  comes back to the entry price; otherwise the stop-loss and a four-hour limit
+  apply.
 - **CHOP: z-score mean reversion.** Buy a CHOP coin 2.5 standard deviations
   below its 8-hour mean and short one 2.5 above; 10% of equity each, at most
   four. Exit when the price is back across the mean or after 4 hours; the
@@ -290,12 +299,14 @@ shorter bars, shorter windows, more coins and selling by momentum (branch `v5`).
 
 `scripts/replay_bars.py` replays the runner itself over recorded candle closes
 (`scripts/fetch_candles.py`), with the same fees and order throttle. On the 12
-days to October 8 the live preset lost 13.5% (worst drop 14.0%), placing 60
-orders a day and paying 0.66% of the account a day in fees; 48% of its trades
-won, the winners averaging +1.0% of the position and the losers -1.5%. The
-15-minute preset it replaced (`config/regime_15m_candidate.json`: 4/16-hour
-EMAs, 24-hour z-score, no momentum test on entries) lost 7.8% over the same
-days. None of some sixty variants replayed on one-minute, 5-minute and
+days to October 8 the live preset lost 12.3% (worst drop 12.5%), placing 54
+orders a day and paying 0.66% of the account a day in fees; 45% of its trades
+won, the winners averaging +1.1% of the position and the losers -1.5%. The
+5-minute preset before the pullback and steep-drop entries (fresh EMA cross,
+sent only while the price was still moving that way) lost 13.5%, and the
+15-minute preset before that (`config/regime_15m_candidate.json`: 4/16-hour
+EMAs, 24-hour z-score) lost 7.8% over the same days. Keeping the cross-back
+exit on pullback positions lost 15.4%. None of some sixty variants replayed on one-minute, 5-minute and
 15-minute bars (windows from 30 minutes to 24 hours, weaker and stronger entry
 triggers, tighter and wider stops, with and without the momentum rules) made
 money over those days: before costs the average trade earned at most about

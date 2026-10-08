@@ -73,6 +73,20 @@ class Config:
     # the last ride_short_minutes instead (0: always fast_minutes).
     ride_short_minutes: int = 0
     ride_steep: float = 0.0
+    # Regime legs, entries. A trend entry right after a sharp move arrives late, so with `pullback` the trend leg
+    # waits for a move against the trend instead: a BEAR coin whose fast EMA is below the slow one is shorted once it
+    # has bounced this far over `momentum` bars, a BULL coin above it is bought once it has dipped this far. The cross
+    # need not be fresh then, the wait-for-momentum test on entries is not applied, and such a position is not closed
+    # when the EMAs cross back (the bounce it was entered on can cause that): it is closed after max_hold_bars instead.
+    pullback: float = 0.0
+    # Steep-drop buy: a BEAR coin whose bar closes at least crash_drop below the previous close is bought (the size
+    # and slots of a mean-reversion position). It is sold at crash_take_profit after fees, unless the price has risen
+    # crash_ride in the last ride_short_minutes; once it has been crash_guard above its entry it is sold if it comes
+    # back to the entry price; otherwise the stop-loss and the mean-reversion time limit apply. 0 switches each off.
+    crash_drop: float = 0.0
+    crash_take_profit: float = 0.0
+    crash_ride: float = 0.0
+    crash_guard: float = 0.0
     mr_take_profit: float = 0.0     # close a mean-reversion position at this profit after fees
     fast_cut: float = 0.0           # close a losing position that moves this far against it within fast_minutes
     fast_minutes: int = 15
@@ -111,6 +125,8 @@ class Config:
             raise ValueError('Invalid live exit configuration')
         if self.bar_minutes not in (1,5,15,30,60) or type(self.bar_minutes) is not int or not 0 <= self.ema_min_gap < 1 or not 0 <= self.profit_arm < 1 or not 0 <= self.ride < 1:
             raise ValueError('bar_minutes must be 1, 5, 15, 30 or 60; ema_min_gap, profit_arm and ride are fractions')
+        if any(not 0 <= v < 1 for v in (self.pullback,self.crash_drop,self.crash_take_profit,self.crash_ride,self.crash_guard)):
+            raise ValueError('pullback and the steep-drop settings are fractions of the price')
         if type(self.ride_short_minutes) is not int or not 0 <= self.ride_short_minutes < self.fast_minutes or not 0 <= self.ride_steep < 1:
             raise ValueError('ride_short_minutes must be shorter than fast_minutes and ride_steep a fraction')
         if not 2 <= self.fast < self.slow <= 1000 or not 2 <= self.momentum <= 1000:

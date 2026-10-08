@@ -17,7 +17,8 @@ from .strategy import Config
 
 
 # Config fields added after earlier ledgers were hashed, newest group first.
-LEGACY_FIELDS = [{'ride_short_minutes', 'ride_steep'},
+LEGACY_FIELDS = [{'pullback', 'crash_drop', 'crash_take_profit', 'crash_ride', 'crash_guard'},
+                 {'ride_short_minutes', 'ride_steep'},
                  {'bar_minutes', 'ema_min_gap', 'profit_arm', 'ride'},
                  {'stop_loss', 'profit_trail', 'mr_take_profit', 'fast_cut', 'fast_minutes'},
                  {'ema_fresh_bars', 'mr_window', 'mr_entry_z', 'mr_fraction', 'mr_slots', 'mr_hold_bars', 'mr_stop', 'mr_cooldown_bars'},

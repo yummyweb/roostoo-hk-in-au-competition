@@ -170,9 +170,9 @@ class RunnerWatchTests(unittest.TestCase):
         live=Config(**json.loads((root/'config/regime_hourly_exits_candidate.json').read_text()))
         for preset in (live,Config(**json.loads((root/'config/live_candidate.json').read_text()))):
             self.assertTrue(all(v>0 for v in (preset.profit_trail,preset.stop_loss,preset.mr_take_profit,preset.drawdown_brake)))
-        logged={k:v for k,v in asdict(hourly).items() if k not in ('stop_loss','profit_trail','mr_take_profit','fast_cut','fast_minutes','bar_minutes','ema_min_gap','profit_arm','ride','ride_short_minutes','ride_steep')}
+        logged={k:v for k,v in asdict(hourly).items() if k not in ('stop_loss','profit_trail','mr_take_profit','fast_cut','fast_minutes','bar_minutes','ema_min_gap','profit_arm','ride','ride_short_minutes','ride_steep','pullback','crash_drop','crash_take_profit','crash_ride','crash_guard')}
         book={'SOL/USD':dict(leg='mr',side=1,entry=100.,bar=990,high=100.,low=100.,level=None)}          # as the deployed runner wrote it
-        state=dict(Runner(hourly,self.path,FakeClient(),False).state,config_hash=digest(hourly,3),cash=95000.,inventory={'SOL/USD':50.},book=book,fills=62)
+        state=dict(Runner(hourly,self.path,FakeClient(),False).state,config_hash=digest(hourly,4),cash=95000.,inventory={'SOL/USD':50.},book=book,fills=62)
         save_state(self.path,state);self.path.with_suffix('.jsonl').write_text(json.dumps({'event':'start','config':logged})+'\n')
         client=Mock();client.exchange_info.return_value=json.loads((root/'config/exchange_info.json').read_text())
         migrate(self.path,live,root/'config/universe-50.json',False,client)

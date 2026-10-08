@@ -3,7 +3,7 @@
   "initial_cash": 100000.0,
   "fast": 16,
   "slow": 64,
-  "momentum": 6,
+  "momentum": 12,
   "risk_per_trade": 0.01,
   "max_position": 0.15,
   "max_exposure": 0.99,
@@ -14,7 +14,7 @@
   "slippage_bps": 3.0,
   "allow_short": true,
   "cooldown_bars": 16,
-  "max_hold_bars": 48,
+  "max_hold_bars": 96,
   "rebalance_bars": 1,
   "top_n": 4,
   "target_volatility": 0.2,
@@ -49,10 +49,5 @@
   "profit_arm": 0.01,
   "ride": 0.003,
   "ride_short_minutes": 5,
-  "ride_steep": 0.01,
-  "pullback": 0.01,
-  "crash_drop": 0.02,
-  "crash_take_profit": 0.01,
-  "crash_ride": 0.005,
-  "crash_guard": 0.005
+  "ride_steep": 0.01
 }
