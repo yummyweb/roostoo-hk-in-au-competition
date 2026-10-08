@@ -17,7 +17,8 @@ from .strategy import Config
 
 
 # Config fields added after earlier ledgers were hashed, newest group first.
-LEGACY_FIELDS = [{'stop_loss', 'profit_trail', 'mr_take_profit', 'fast_cut', 'fast_minutes'},
+LEGACY_FIELDS = [{'bar_minutes', 'ema_min_gap', 'profit_arm', 'ride'},
+                 {'stop_loss', 'profit_trail', 'mr_take_profit', 'fast_cut', 'fast_minutes'},
                  {'ema_fresh_bars', 'mr_window', 'mr_entry_z', 'mr_fraction', 'mr_slots', 'mr_hold_bars', 'mr_stop', 'mr_cooldown_bars'},
                  {'breakout_high_bars', 'trail_atr'},
                  {'drawdown_brake', 'brake_window_bars'},
@@ -129,7 +130,13 @@ def migrate(path, config, universe, live, client):
         # Trailing-stop levels belong to the old rule; high-water marks are kept, so they rebuild under the new one.
         # Positions of another strategy are not this one's: its book starts empty and the runner releases what it finds.
         book = state.get('book', {}) if previous.rank_model == config.rank_model == 'regime_legs' else {}
-        updated = dict(state, config_hash=digest(config), pending=None, targets={}, stop_levels={}, queue=[], legs_bar=None, book=book,
+        locks = state.get('locks', {})
+        if previous.bar_minutes != config.bar_minutes:
+            # Bars are numbered by their length: positions restart their clocks at the current bar and waits are dropped.
+            now_bar = int(time.time()*1000) // (config.bar_minutes*60000)
+            book = {pair: dict(position, bar=now_bar, level=None) for pair, position in book.items()}
+            locks = {}
+        updated = dict(state, config_hash=digest(config), pending=None, targets={}, stop_levels={}, queue=[], legs_bar=None, book=book, locks=locks,
                        target_day=None, target_regime=None, market_regime=None, regime_age=0)
         append_event(path, {'event': 'config_migration', 'timestamp': int(time.time()*1000),
                             'mode': state['mode'], 'old_config_hash': state['config_hash'],

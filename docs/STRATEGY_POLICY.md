@@ -82,7 +82,10 @@ to run its own design live: a per-coin BULL/BEAR/CHOP label picking between an
 EMA crossover (long and short) and z-score mean reversion (README, "Updating
 the running bot"), and that evening added exits checked every minute (2%
 stop-loss, 1% profit lock, 1% mean-reversion profit target), larger positions
-and a 2% loss brake; those additions were not backtested. The four-slot breakout rotation with ATR trailing stops, the
+and a 2% loss brake, and then moved the strategy to 15-minute bars built from
+Roostoo's quotes (4/16-hour EMAs, 24-hour z-score, all 65 quoted crypto pairs,
+profits taken when momentum stalls). A replay of the runner over the 12 days
+to October 8 lost 7.6%, and no replayed variant made money (README). The four-slot breakout rotation with ATR trailing stops, the
 only family positive in every held-back period of the October 7 study, stays
 available as `config/breakout_candidate.json`; the strength-gated trend ensemble with a gradual
 drawdown brake remains the supported lower-risk preset. Any promotion

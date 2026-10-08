@@ -33,7 +33,8 @@ def decide(features,labels,book,locks,c,bar):
             fast,slow,atr=f['ema_fast'],f['ema_slow'],f['atr_24']
             if fast is not None and slow is not None and (fast<slow if side>0 else fast>slow):
                 exits.append(pair);locks[pair]=bar+c.cooldown_bars;continue      # the cross that opened it has reversed
-            if side>0:   # the trailing level only ever tightens
+            if c.stop_loss:hit=False   # a fixed stop-loss and the profit lock in watch() replace the ATR trail
+            elif side>0:   # the trailing level only ever tightens
                 p['level']=max(p['level'] or 0.,max(p['high'],close)-c.stop_atr*atr);hit=close<=p['level']*(1+TIE)
             else:
                 p['level']=min(p['level'] or float('inf'),min(p['low'],close)+c.stop_atr*atr);hit=close>=p['level']*(1-TIE)
@@ -51,6 +52,7 @@ def decide(features,labels,book,locks,c,bar):
     for pair in sorted(features):
         f=features[pair]
         if not free(pair) or f['ema_fast'] is None or f['ema_slow'] is None or not f['atr_24']>0:continue
+        if abs(f['ema_fast']-f['ema_slow'])<c.ema_min_gap*f['close']:continue           # a hairline cross is not a trend yet
         gap=(f['ema_fast']-f['ema_slow'])/f['atr_24']
         if gap>0 and f['age_up']<=c.ema_fresh_bars and labels.get(pair)=='BULL':trend.append((-gap,pair,1))
         elif gap<0 and f['age_down']<=c.ema_fresh_bars and labels.get(pair)=='BEAR' and c.allow_short:trend.append((gap,pair,-1))
@@ -78,6 +80,10 @@ def watch(book,quotes,c,now,drift):
     quotes: pair -> {'bid','ask'}. A long is valued at the bid and a short at the ask, the prices it would close at.
     drift:  pair -> price change over the last c.fast_minutes minutes (absent while that history is still short).
     Each position's `best` price since entry is updated in place. Profit is counted after the fees of both orders.
+
+    Momentum decides when a profit is taken: while the price is still moving the position's way (`ride`) a winner is
+    held; once that move stalls, a mean-reversion position at its target and a trend position past `profit_arm` are
+    closed. The profit lock stays underneath as the limit on what a real profit may give back.
     """
     cost=2*c.fee_bps/10000;out=[]
     for pair,p in book.items():
@@ -87,9 +93,12 @@ def watch(book,quotes,c,now,drift):
         best=p['best']=max(p.get('best',entry),price) if side>0 else min(p.get('best',entry),price)
         move=side*(price/entry-1);peak=side*(best/entry-1);back=side*(best-price)/best
         settled=now-p.get('opened',0)>=c.fast_minutes*60000                      # the fall that led to the entry is not counted against it
+        wave=side*drift[pair] if pair in drift else None                         # how far the price went the position's way lately
+        riding=bool(c.ride) and wave is not None and wave>=c.ride
         if c.stop_loss and move<=-c.stop_loss:reason='stop loss'
-        elif c.profit_trail and peak>cost and back>=c.profit_trail:reason='profit lock'
-        elif c.mr_take_profit and p['leg']==MR and move-cost>=c.mr_take_profit:reason='profit target'
+        elif c.profit_trail and peak-cost>c.profit_arm and back>=c.profit_trail:reason='profit lock'
+        elif c.mr_take_profit and p['leg']==MR and move-cost>=c.mr_take_profit and not riding:reason='profit target'
+        elif c.ride and p['leg']==EMA and wave is not None and move-cost>=c.profit_arm and not riding:reason='momentum faded'
         elif c.fast_cut and move<0 and settled and side*drift.get(pair,0.)<=-c.fast_cut:reason='fast fall'
         else:continue
         out.append((pair,reason))

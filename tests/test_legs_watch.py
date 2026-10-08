@@ -49,6 +49,25 @@ class WatchTests(unittest.TestCase):
         self.assertEqual(seen('ema',1,99.5)[0],[[]])                                                     # no price history yet
         self.assertEqual(seen('ema',1,99.5,drift={'X/USD':-.012},opened=NOW-5*60000)[0],[[]])            # the fall before the entry is not held against it
 
+    def test_the_lock_can_wait_for_a_real_profit_and_momentum_decides_when_a_profit_is_taken(self):
+        armed=replace(W,profit_arm=.006)
+        self.assertEqual(seen('ema',1,100.5,99.4,config=armed)[0],[[],[]])                               # +0.3% after fees was not yet a real profit
+        self.assertEqual(seen('ema',1,101.,99.9,config=armed)[0],[[],self.HIT('profit lock')])
+        ride=replace(armed,ride=.002)
+        # a trend position in real profit is held while the last minutes still went its way, and closed once they did not
+        self.assertEqual(seen('ema',1,101.,config=ride,drift={'X/USD':.003})[0],[[]])
+        self.assertEqual(seen('ema',1,101.,config=ride,drift={'X/USD':.001})[0],[self.HIT('momentum faded')])
+        self.assertEqual(seen('ema',-1,99.,config=ride,drift={'X/USD':-.003})[0],[[]])
+        self.assertEqual(seen('ema',-1,99.,config=ride,drift={'X/USD':.001})[0],[self.HIT('momentum faded')])
+        self.assertEqual(seen('ema',1,100.5,config=ride,drift={'X/USD':0.})[0],[[]])                     # stalled, but not yet a real profit
+        self.assertEqual(seen('ema',1,101.,config=ride)[0],[[]])                                         # no price history yet: left to the lock
+        # a mean-reversion position at its target is held while it is still running, and sold when it is not
+        self.assertEqual(seen('mr',1,101.3,config=ride,drift={'X/USD':.003})[0],[[]])
+        self.assertEqual(seen('mr',1,101.3,config=ride,drift={'X/USD':.001})[0],[self.HIT('profit target')])
+        self.assertEqual(seen('mr',1,101.3,config=ride)[0],[self.HIT('profit target')])
+        for bad in (dict(profit_arm=1.),dict(ride=-.1)):
+            with self.assertRaises(ValueError):replace(W,**bad).validate()
+
     def test_rules_set_to_zero_are_off_and_a_wide_quote_is_not_acted_on(self):
         self.assertEqual(seen('mr',1,50.,150.,config=C,drift={'X/USD':-.5})[0],[[],[]])
         p=held('ema',1);self.assertEqual(watch({'X/USD':p},{'X/USD':{'bid':90.,'ask':100.,'tradable':False}},W,NOW,{}),[])
@@ -108,11 +127,12 @@ class RunnerWatchTests(unittest.TestCase):
         from roostoo.migrate_state import digest,migrate
         root=Path(__file__).resolve().parents[1]
         hourly=Config(**json.loads((root/'config/regime_hourly_candidate.json').read_text()))
-        live=Config(**json.loads((root/'config/live_candidate.json').read_text()))
-        self.assertEqual((live.profit_trail,live.stop_loss>0,live.mr_take_profit>0,live.drawdown_brake>0),(.01,True,True,True))
-        logged={k:v for k,v in asdict(hourly).items() if k not in ('stop_loss','profit_trail','mr_take_profit','fast_cut','fast_minutes')}
+        live=Config(**json.loads((root/'config/regime_hourly_exits_candidate.json').read_text()))
+        for preset in (live,Config(**json.loads((root/'config/live_candidate.json').read_text()))):
+            self.assertTrue(all(v>0 for v in (preset.profit_trail,preset.stop_loss,preset.mr_take_profit,preset.drawdown_brake)))
+        logged={k:v for k,v in asdict(hourly).items() if k not in ('stop_loss','profit_trail','mr_take_profit','fast_cut','fast_minutes','bar_minutes','ema_min_gap','profit_arm','ride')}
         book={'SOL/USD':dict(leg='mr',side=1,entry=100.,bar=990,high=100.,low=100.,level=None)}          # as the deployed runner wrote it
-        state=dict(Runner(hourly,self.path,FakeClient(),False).state,config_hash=digest(hourly,1),cash=95000.,inventory={'SOL/USD':50.},book=book,fills=62)
+        state=dict(Runner(hourly,self.path,FakeClient(),False).state,config_hash=digest(hourly,2),cash=95000.,inventory={'SOL/USD':50.},book=book,fills=62)
         save_state(self.path,state);self.path.with_suffix('.jsonl').write_text(json.dumps({'event':'start','config':logged})+'\n')
         client=Mock();client.exchange_info.return_value=json.loads((root/'config/exchange_info.json').read_text())
         migrate(self.path,live,root/'config/universe-50.json',False,client)

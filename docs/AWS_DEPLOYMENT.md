@@ -48,14 +48,16 @@ needed to keep this service running. The event guide also limits storage to
 30 GB and restricts the account to the provided EC2 deployment; do not add
 other AWS services or launch another instance.
 
-Use `ROOSTOO_UNIVERSE_CONFIG=/opt/roostoo/config/universe-50.json` for the fixed
-50-pair execution universe. The default `config/live_candidate.json` now runs
-the team's regime strategy: each coin is labelled BULL, BEAR or CHOP every hour;
-BULL and BEAR coins trade the EMA 48/200 crossover (long and short), CHOP coins
-trade 168-hour z-score mean reversion both ways, and every position is checked
-each minute against a stop-loss, a profit lock and a profit target. It warms 1,000 Binance hourly
-candles per pair as a proxy and trades current Roostoo quotes, so verify the
-pair list and wallet before any live activation.
+Use `ROOSTOO_UNIVERSE_CONFIG=/opt/roostoo/config/universe-crypto.json` for the
+65 crypto pairs Roostoo quotes (`universe-50.json` is the earlier 50-pair set).
+The default `config/live_candidate.json` runs the team's regime strategy on
+15-minute bars: each coin is labelled BULL, BEAR or CHOP every quarter hour;
+BULL and BEAR coins trade the 4/16-hour EMA crossover (long and short), CHOP
+coins trade 24-hour z-score mean reversion both ways, and every position is
+checked each minute against a stop-loss, a momentum rule and a profit lock. It
+fills each pair's history from Binance 15-minute closes when it starts, then
+builds its bars from Roostoo's own quotes, so verify the pair list and wallet
+before any live activation.
 
 Holdings and shorts the strategy did not open itself are closed on the first
 cycles after a switch. The breakout preset is `config/breakout_candidate.json`.
@@ -79,15 +81,16 @@ sudo systemctl show roostoo-bot -p ExecStart -p ActiveState -p SubState
   switch, follow the transition procedure below.
 - The status line shows `"regimes"` (how many coins carry each label),
   `"positions"` (open positions by leg and side), `"invested"` (share of the
-  account in positions), `"brake"` (true while the loss brake blocks new
+  account in positions), `"ready"` (coins with enough history to trade), `"brake"` (true while the loss brake blocks new
   entries), `"queued"` (orders waiting for their minute), `"done"` (the order
   sent this cycle) and `"why"` (its reason, for example `profit lock` or
-  `stop loss`). Entries are decided once per hour and exits are checked every
-  minute; `"done": null` in between is normal.
+  `stop loss`). Entries are decided each quarter hour and exits are checked
+  every minute; `"done": null` means nothing needed doing that minute.
 - `Cycle blocked:` or a startup traceback identifies an execution/data error.
   Missing credentials, a starting cash mismatch, stale quotes and an unresolved
   spot order prevent trading. With the regime strategy, `No candles for this
-  hour` means the candle download failed: queued orders still go out and the
+  hour` means the candle download failed (with bars built from quotes: the
+  start-up history from Binance): queued orders still go out and the
   minute exits (stop-loss, profit lock, profit target) still run, but no new
   entry is decided and the hourly exits are not checked until it succeeds (it
   is retried every minute). The live starting wallet must be flat and

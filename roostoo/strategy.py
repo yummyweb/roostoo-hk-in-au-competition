@@ -65,9 +65,16 @@ class Config:
     # Regime legs, exits checked every minute on live quotes (0 switches a rule off).
     stop_loss: float = 0.0          # close a position this far against its entry price
     profit_trail: float = 0.0       # once a position has been in profit after fees, close it this far off its best price
+    profit_arm: float = 0.0         # the profit after fees a position must first reach before that lock applies
+    ride: float = 0.0               # a profitable position is held while the price has moved this far its way in the last
+                                    # fast_minutes; once the move stalls the profit is taken (0: no momentum rule)
     mr_take_profit: float = 0.0     # close a mean-reversion position at this profit after fees
     fast_cut: float = 0.0           # close a losing position that moves this far against it within fast_minutes
     fast_minutes: int = 15
+    # Regime legs: length of one bar. 60 reads hourly candles from Binance; 1, 5, 15 or 30 builds the bars from
+    # Roostoo's own quotes (the exchange has no candle endpoint). Every window above is counted in bars.
+    bar_minutes: int = 60
+    ema_min_gap: float = 0.0        # an EMA entry needs the fast EMA this fraction of the price beyond the slow one
 
     def validate(self):
         if self.strategy not in ('trend','hybrid','rotation','pullback','reversion','allocation','lstm_prediction','cross_asset','buy_hold','cash'):
@@ -97,6 +104,8 @@ class Config:
         if any(not 0 <= v < 1 for v in (self.stop_loss,self.profit_trail,self.mr_take_profit,self.fast_cut)) \
                 or type(self.fast_minutes) is not int or not 1 <= self.fast_minutes <= 120:
             raise ValueError('Invalid live exit configuration')
+        if self.bar_minutes not in (1,5,15,30,60) or type(self.bar_minutes) is not int or not 0 <= self.ema_min_gap < 1 or not 0 <= self.profit_arm < 1 or not 0 <= self.ride < 1:
+            raise ValueError('bar_minutes must be 1, 5, 15, 30 or 60; ema_min_gap, profit_arm and ride are fractions')
         if not 2 <= self.fast < self.slow <= 1000 or not 2 <= self.momentum <= 1000:
             raise ValueError('Require 2 <= fast < slow <= 1000 and a valid momentum window')
         if any(not math.isfinite(v) for v in asdict(self).values() if isinstance(v, (float,int))):
