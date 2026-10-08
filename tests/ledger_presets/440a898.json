@@ -47,7 +47,5 @@
   "bar_minutes": 15,
   "ema_min_gap": 0.002,
   "profit_arm": 0.01,
-  "ride": 0.003,
-  "ride_short_minutes": 10,
-  "ride_steep": 0.01
+  "ride": 0.003
 }

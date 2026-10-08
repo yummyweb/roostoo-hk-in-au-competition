@@ -74,16 +74,18 @@ def decide(features,labels,book,locks,c,bar):
     return exits,entries
 
 
-def watch(book,quotes,c,now,drift):
+def watch(book,quotes,c,now,drift,quick=None):
     """Exit rules checked every minute on live quotes. Returns [(pair, reason)] for the positions to close now.
 
     quotes: pair -> {'bid','ask'}. A long is valued at the bid and a short at the ask, the prices it would close at.
     drift:  pair -> price change over the last c.fast_minutes minutes (absent while that history is still short).
+    quick:  pair -> price change over the last c.ride_short_minutes minutes, likewise.
     Each position's `best` price since entry is updated in place. Profit is counted after the fees of both orders.
 
     Momentum decides when a profit is taken: while the price is still moving the position's way (`ride`) a winner is
     held; once that move stalls, a mean-reversion position at its target and a trend position past `profit_arm` are
-    closed. The profit lock stays underneath as the limit on what a real profit may give back.
+    closed. A steep move (`ride_steep` over fast_minutes) is judged over fast_minutes, anything gentler over the
+    shorter window. The profit lock stays underneath as the limit on what a real profit may give back.
     """
     cost=2*c.fee_bps/10000;out=[]
     for pair,p in book.items():
@@ -94,7 +96,10 @@ def watch(book,quotes,c,now,drift):
         move=side*(price/entry-1);peak=side*(best/entry-1);back=side*(best-price)/best
         settled=now-p.get('opened',0)>=c.fast_minutes*60000                      # the fall that led to the entry is not counted against it
         wave=side*drift[pair] if pair in drift else None                         # how far the price went the position's way lately
-        riding=bool(c.ride) and wave is not None and wave>=c.ride
+        need=c.ride
+        if c.ride_short_minutes and not (wave is not None and wave>=c.ride_steep):   # not a steep move: look at the shorter window
+            wave=side*quick[pair] if quick and pair in quick else None;need=c.ride*c.ride_short_minutes/c.fast_minutes
+        riding=bool(c.ride) and wave is not None and wave>=need
         if c.stop_loss and move<=-c.stop_loss:reason='stop loss'
         elif c.profit_trail and peak-cost>c.profit_arm and back>=c.profit_trail:reason='profit lock'
         elif c.mr_take_profit and p['leg']==MR and move-cost>=c.mr_take_profit and not riding:reason='profit target'

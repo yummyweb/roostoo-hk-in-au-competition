@@ -453,13 +453,16 @@ class Runner:
         save_state(self.path,self.state);return True
 
     def drift(self,quotes,now):
-        """Price change of each pair over the last fast_minutes, from the bot's own minute-by-minute record of mid prices."""
-        span=self.c.fast_minutes*60000;out={}
+        """Price change of each pair over the last fast_minutes and over the last ride_short_minutes, from the bot's own
+        minute-by-minute record of mid prices. A window is left out until the record covers most of it."""
+        span=self.c.fast_minutes*MINUTE;short=self.c.ride_short_minutes*MINUTE;out={};quick={}
         for pair,q in quotes.items():
             mid=(q['bid']+q['ask'])/2;tape=self.tape.setdefault(pair,[]);tape.append((now,mid))
             while tape[0][0]<now-span:tape.pop(0)
             if now-tape[0][0]>=span*.8:out[pair]=mid/tape[0][1]-1
-        return out
+            recent=next(sample for sample in tape if sample[0]>=now-short)
+            if short and now-recent[0]>=short*.8:quick[pair]=mid/recent[1]-1
+        return out,quick
 
     def feed(self,pair,timestamp,close):
         """Add one close to a pair's series, as a bar whose range is the move since the previous close."""
@@ -533,7 +536,7 @@ class Runner:
             state['legs_bar']=bar
             if hourly or state['queue']:   # a minute decision that changes nothing is not journaled
                 self.log({'event':'decision','timestamp':now,'bar':bar,'refresh_seconds':refresh_seconds,'labels':self.labels,'queue':state['queue']})
-        for pair,reason in watch(book,quotes,self.c,now,self.drift(quotes,now)):  # every minute: stop-loss, profit lock, profit target, fast fall
+        for pair,reason in watch(book,quotes,self.c,now,*self.drift(quotes,now)):  # every minute: stop-loss, profit lock, profit target, fast fall
             if any(a['pair']==pair and a['action'] in CLOSING for a in state['queue']):continue
             p=book[pair];state['queue']=[a for a in state['queue'] if a['pair']!=pair]
             state['queue'].insert(0,{'pair':pair,'action':'SELL' if p['side']>0 else 'COVER','reason':reason})

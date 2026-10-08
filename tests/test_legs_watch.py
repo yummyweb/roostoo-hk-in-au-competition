@@ -15,9 +15,9 @@ W=replace(C,stop_loss=.02,profit_trail=.01,mr_take_profit=.01,fast_cut=.01,fast_
 NOW=10**9;DOWN=dict(ema_fast=99.,age_up=10**6,age_down=1)
 def held(leg,side,**more):return dict(dict(leg=leg,side=side,entry=100.,bar=5,high=100.,low=100.,level=None),**more)
 def at(price):return {'X/USD':{'bid':price,'ask':price}}
-def seen(leg,side,*prices,config=W,drift=None,**more):
+def seen(leg,side,*prices,config=W,drift=None,quick=None,**more):
     """Show one position a run of prices; return what watch said at each and the position."""
-    p=held(leg,side,**more);return [watch({'X/USD':p},at(price),config,NOW,drift or {}) for price in prices],p
+    p=held(leg,side,**more);return [watch({'X/USD':p},at(price),config,NOW,drift or {},quick) for price in prices],p
 
 
 class WatchTests(unittest.TestCase):
@@ -68,6 +68,25 @@ class WatchTests(unittest.TestCase):
         for bad in (dict(profit_arm=1.),dict(ride=-.1)):
             with self.assertRaises(ValueError):replace(W,**bad).validate()
 
+    def test_a_steep_move_is_judged_over_the_long_window_and_a_gentle_one_over_the_short_window(self):
+        c=replace(W,profit_arm=.006,ride=.003,fast_minutes=30,ride_short_minutes=10,ride_steep=.01)   # 0.3% in 30 minutes is 0.1% in 10
+        X=lambda **windows:{name:{'X/USD':change} for name,change in windows.items()}
+        # steep: 1.2% its way in 30 minutes; a ten-minute pause does not end the ride
+        self.assertEqual(seen('ema',1,101.,config=c,**X(drift=.012,quick=-.002))[0],[[]])
+        # gentle: 0.5% in 30 minutes would pass the long test, but the last ten minutes have stalled
+        self.assertEqual(seen('ema',1,101.,config=c,**X(drift=.005,quick=.0005))[0],[self.HIT('momentum faded')])
+        self.assertEqual(seen('ema',1,101.,config=c,**X(drift=.005,quick=.002))[0],[[]])               # gentle and still moving
+        self.assertEqual(seen('ema',-1,99.,config=c,**X(drift=-.012,quick=.002))[0],[[]])               # a short in a steep fall
+        self.assertEqual(seen('ema',-1,99.,config=c,**X(drift=-.005,quick=0.))[0],[self.HIT('momentum faded')])
+        # soon after a restart only the short window is known: it decides
+        self.assertEqual(seen('ema',1,101.,config=c,**X(quick=.0005))[0],[self.HIT('momentum faded')])
+        self.assertEqual(seen('ema',1,101.,config=c,**X(quick=.002))[0],[[]])
+        self.assertEqual(seen('ema',1,101.,config=c)[0],[[]])                                           # nothing known yet: left to the lock
+        self.assertEqual(seen('mr',1,101.3,config=c,**X(drift=.005,quick=.0005))[0],[self.HIT('profit target')])
+        self.assertEqual(seen('mr',1,101.3,config=c,**X(drift=.012,quick=-.002))[0],[[]])
+        for bad in (dict(ride_short_minutes=30),dict(ride_short_minutes=1.5),dict(ride_steep=-.1)):
+            with self.assertRaises(ValueError):replace(c,**bad).validate()
+
     def test_rules_set_to_zero_are_off_and_a_wide_quote_is_not_acted_on(self):
         self.assertEqual(seen('mr',1,50.,150.,config=C,drift={'X/USD':-.5})[0],[[],[]])
         p=held('ema',1);self.assertEqual(watch({'X/USD':p},{'X/USD':{'bid':90.,'ask':100.,'tradable':False}},W,NOW,{}),[])
@@ -111,6 +130,17 @@ class RunnerWatchTests(unittest.TestCase):
         for _ in range(16):self.assertIsNone(self.step(r)['done'])
         self.price('A/USD',98.9);status=self.step(r);self.assertEqual((status['done'],status['why']),('SELL A/USD','fast fall'))
 
+    def test_the_runner_measures_both_windows_from_its_own_minute_prices(self):
+        r=self.runner(replace(W,fast_minutes=30,ride_short_minutes=10));self.decide_hour(r,self.FLAT,{})
+        for minute in range(9):
+            self.price('A/USD',100.+minute/10);self.step(r)
+        long,short=r.drift(self.quotes,self.now)                                                      # same minute: nine minutes of record
+        self.assertEqual((long,sorted(short)),({},list(self.pairs)));self.assertAlmostEqual(short['A/USD'],100.8/100.-1)
+        for minute in range(9,26):
+            self.price('A/USD',100.+minute/10);self.step(r)
+        long,short=r.drift(self.quotes,self.now)
+        self.assertAlmostEqual(long['A/USD'],102.5/100.-1);self.assertAlmostEqual(short['A/USD'],102.5/101.5-1)
+
     def test_the_loss_brake_opens_nothing_while_the_account_is_two_percent_below_its_recent_high(self):
         r=self.runner(replace(W,drawdown_brake=.02,brake_window_bars=24));entry=dict(self.FLAT,**{'A/USD':row(age_up=3)})
         self.decide_hour(r,self.FLAT,{});self.assertEqual((self.step(r)['brake'],r.state['equity_marks']),(False,[[1000,100000.]]))
@@ -130,9 +160,9 @@ class RunnerWatchTests(unittest.TestCase):
         live=Config(**json.loads((root/'config/regime_hourly_exits_candidate.json').read_text()))
         for preset in (live,Config(**json.loads((root/'config/live_candidate.json').read_text()))):
             self.assertTrue(all(v>0 for v in (preset.profit_trail,preset.stop_loss,preset.mr_take_profit,preset.drawdown_brake)))
-        logged={k:v for k,v in asdict(hourly).items() if k not in ('stop_loss','profit_trail','mr_take_profit','fast_cut','fast_minutes','bar_minutes','ema_min_gap','profit_arm','ride')}
+        logged={k:v for k,v in asdict(hourly).items() if k not in ('stop_loss','profit_trail','mr_take_profit','fast_cut','fast_minutes','bar_minutes','ema_min_gap','profit_arm','ride','ride_short_minutes','ride_steep')}
         book={'SOL/USD':dict(leg='mr',side=1,entry=100.,bar=990,high=100.,low=100.,level=None)}          # as the deployed runner wrote it
-        state=dict(Runner(hourly,self.path,FakeClient(),False).state,config_hash=digest(hourly,2),cash=95000.,inventory={'SOL/USD':50.},book=book,fills=62)
+        state=dict(Runner(hourly,self.path,FakeClient(),False).state,config_hash=digest(hourly,3),cash=95000.,inventory={'SOL/USD':50.},book=book,fills=62)
         save_state(self.path,state);self.path.with_suffix('.jsonl').write_text(json.dumps({'event':'start','config':logged})+'\n')
         client=Mock();client.exchange_info.return_value=json.loads((root/'config/exchange_info.json').read_text())
         migrate(self.path,live,root/'config/universe-50.json',False,client)

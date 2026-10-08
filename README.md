@@ -257,8 +257,10 @@ checked every minute on live quotes.
   - *Stop-loss*: 2% against the entry price.
   - *Momentum hold*: a crossover position that is at least 1% in profit, or a
     mean-reversion position at least 1.5% in profit, is held while the price
-    has moved 0.3% or more its way in the last 30 minutes, and closed as soon
-    as that move stalls.
+    is still moving its way and closed as soon as that move stalls. A steep
+    move (1% or more its way in the last 30 minutes) is judged over those 30
+    minutes and has to keep 0.3% of it; anything gentler is judged over the
+    last 10 minutes and has to show 0.1%, so a stall is seen sooner.
   - *Profit lock*: once a position has been more than 1% in profit, it is
     closed if the price falls 0.75% from its best since entry.
   - *Fast-fall cut*: a losing position is closed when the price has moved 1.5%
@@ -284,10 +286,12 @@ shorter bars, shorter windows, more coins and selling by momentum (branch `v5`).
 
 `scripts/replay_bars.py` replays the runner itself over recorded candle closes
 (`scripts/fetch_candles.py`), with the same fees and order throttle. On the 12
-days to October 8 the live preset lost 10.3% (worst drop 11.1%), placing 48
-orders a day and paying 0.58% of the account a day in fees; 52% of its trades
-won, the winners averaging +1.2% of the position and the losers -2.0%. With
-the first numbers tried, a 3% stop-loss and a 1.5% profit lock, it lost 7.6%.
+days to October 8 the live preset lost 7.8% (worst drop 8.9%), placing 49
+orders a day and paying 0.62% of the account a day in fees; 53% of its trades
+won, the winners averaging +1.3% of the position and the losers -2.0%. With
+the first numbers tried (a 3% stop-loss, a 1.5% profit lock and one 30-minute
+momentum window) it lost 7.6%; with the tighter stop and lock but still one
+window, 10.3%.
 None of some sixty variants replayed on one-minute and 15-minute bars
 (windows from 30 minutes to 24 hours, weaker and stronger entry triggers,
 tighter and wider stops, with and without the momentum rule) made money over

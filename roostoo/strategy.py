@@ -68,6 +68,11 @@ class Config:
     profit_arm: float = 0.0         # the profit after fees a position must first reach before that lock applies
     ride: float = 0.0               # a profitable position is held while the price has moved this far its way in the last
                                     # fast_minutes; once the move stalls the profit is taken (0: no momentum rule)
+    # A steep move is judged over all of fast_minutes, a gentle one over a shorter window so a stall is seen sooner: when
+    # the price has moved less than ride_steep the position's way in fast_minutes, `ride` is applied, in proportion, to
+    # the last ride_short_minutes instead (0: always fast_minutes).
+    ride_short_minutes: int = 0
+    ride_steep: float = 0.0
     mr_take_profit: float = 0.0     # close a mean-reversion position at this profit after fees
     fast_cut: float = 0.0           # close a losing position that moves this far against it within fast_minutes
     fast_minutes: int = 15
@@ -106,6 +111,8 @@ class Config:
             raise ValueError('Invalid live exit configuration')
         if self.bar_minutes not in (1,5,15,30,60) or type(self.bar_minutes) is not int or not 0 <= self.ema_min_gap < 1 or not 0 <= self.profit_arm < 1 or not 0 <= self.ride < 1:
             raise ValueError('bar_minutes must be 1, 5, 15, 30 or 60; ema_min_gap, profit_arm and ride are fractions')
+        if type(self.ride_short_minutes) is not int or not 0 <= self.ride_short_minutes < self.fast_minutes or not 0 <= self.ride_steep < 1:
+            raise ValueError('ride_short_minutes must be shorter than fast_minutes and ride_steep a fraction')
         if not 2 <= self.fast < self.slow <= 1000 or not 2 <= self.momentum <= 1000:
             raise ValueError('Require 2 <= fast < slow <= 1000 and a valid momentum window')
         if any(not math.isfinite(v) for v in asdict(self).values() if isinstance(v, (float,int))):
