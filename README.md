@@ -275,7 +275,10 @@ checked every minute on live quotes.
   (0) so the runner keeps trading after a losing stretch; only the 30%
   `max_drawdown` halt remains.
 
-Orders are market orders, one per minute, exits before entries. Shorts are 1x through the exchange's
+Orders are market orders, exits before entries. Roostoo allows 30 API calls a
+minute; a cycle uses four to read the clock, quotes, wallet and shorts, so the
+runner sends up to 24 orders in one cycle and then sleeps a minute. An entry
+that finds no cash waits in the queue for what the cycle's closes free. Shorts are 1x through the exchange's
 short endpoints; an interrupted short request is settled from the exchange's
 position list, and if the account is not allowed to short the long side keeps
 trading. `roostoo/legs.py` holds the decision functions: the runner calls

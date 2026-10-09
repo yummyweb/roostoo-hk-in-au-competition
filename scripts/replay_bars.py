@@ -44,7 +44,7 @@ def replay(c,days=6.,skip=0.):
     rules=load_rules(json.loads((ROOT/'config/exchange_info.json').read_text()),pairs);half=c.spread_bps/20000
     events=[];trades=[];open_={};fees=0.;equity=[];orders=0
     with tempfile.TemporaryDirectory() as folder,patch.object(bot,'save_state',lambda path,state:None):
-        r=Runner(c,Path(folder)/'state.json',Offline(),False);r.rules=rules;r.log=events.append
+        r=Runner(c,Path(folder)/'state.json',Offline(),False);r.rules=rules;r.log=events.append;r.orders=bot.ORDERS_PER_CYCLE
         r.series={pair:[Indicators(c),RegimeFilter(r.regime),None] for pair in pairs}
         for t in [t for t in range(first) if stamps[t]%span==0][-WARM:]:           # the bars that closed before the window
             for pair in pairs:r.feed(pair,stamps[t],series[pair][t][1])
