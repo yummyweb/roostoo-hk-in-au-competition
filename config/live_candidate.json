@@ -27,7 +27,7 @@
   "take_profit_pct": 0.01,
   "take_profit_trail": 0.06,
   "take_profit_fraction": 0.0,
-  "drawdown_brake": 0.02,
+  "drawdown_brake": 0.0,
   "brake_window_bars": 24,
   "breakout_high_bars": 120,
   "trail_atr": 4.0,

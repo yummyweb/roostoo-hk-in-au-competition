@@ -269,8 +269,11 @@ checked every minute on live quotes.
     closed if the price falls 0.75% from its best since entry.
   - *Fast-fall cut*: a losing position is closed when the price has moved 1.5%
     against it within 30 minutes.
-- **Loss brake.** While equity is 2% or more below its highest value of the
-  last 24 hours nothing new is opened; open positions keep their own exits.
+- **Loss brake: off.** `drawdown_brake` can stop new entries while equity is a
+  set fraction below its highest value of the last `brake_window_bars` hours.
+  It was on at 2% over 24 hours until October 9, when the team switched it off
+  (0) so the runner keeps trading after a losing stretch; only the 30%
+  `max_drawdown` halt remains.
 
 Orders are market orders, one per minute, exits before entries. Shorts are 1x through the exchange's
 short endpoints; an interrupted short request is settled from the exchange's
