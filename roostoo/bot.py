@@ -12,6 +12,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import time
 from urllib.parse import urlencode
 from urllib.request import urlopen
@@ -19,6 +20,7 @@ from .api import Client,APIError
 from .allocation import allocation_targets,brake_scale,breakout_targets
 from .data import Bar
 from .legs import decide,moving,watch
+from .metrics import ratios
 from .ranking import LOOKBACK,trend_frame
 from .regime_hmm import RegimeFilter
 from .rules import load_rules
@@ -136,6 +138,18 @@ class Runner:
         self.series=None       # bars built from quotes: pair -> [Indicators, RegimeFilter, last close], warmed on the first cycle
         self.no_shorts=False   # set when the exchange says this account cannot short; the short side is then skipped
         self.tape={}           # pair -> [(time, mid price)] of the last fast_minutes, from the quotes read each cycle
+        if self.legs and 'daily' not in self.state:self.state['daily']=self.daily_history()
+
+    def daily_history(self):
+        """Last equity of each UTC day this ledger has journaled, for the Sharpe and Sortino ratios: {day number: equity}."""
+        days={};journal=self.path.with_suffix('.jsonl')
+        if journal.exists():
+            with journal.open() as lines:
+                for line in lines:
+                    if '"event": "snapshot"' not in line:continue
+                    stamp=re.search(r'"timestamp": (\d+)',line);equity=re.search(r'"equity": ([0-9.]+)',line)
+                    if stamp and equity:days[str(int(stamp.group(1))//DAY)]=float(equity.group(1))
+        return days
 
     def log(self,event):
         with self.path.with_suffix('.jsonl').open('a') as f:
@@ -560,19 +574,24 @@ class Runner:
             for action in list(state['queue']):
                 if not quotes[action['pair']].get('tradable',True):continue
                 # A trend entry is sent only while the price is moving its way; one that arrives after the move waits in the queue.
-                if self.c.ride and action.get('leg')=='ema' and not moving(self.c,1 if action['action']=='BUY' else -1,action['pair'],*waves):continue
+                if self.c.ride and not self.c.pullback and action.get('leg')=='ema' and not moving(self.c,1 if action['action']=='BUY' else -1,action['pair'],*waves):continue
                 state['queue'].remove(action);done=dict(action,filled=self.act(action,account,quotes,now))
                 if done['filled'] or state['last_submit']==now:break                # a request went out; an action skipped unsent does not use the minute
         counts={k:sum(1 for v in self.labels.values() if v==k) for k in ('BULL','BEAR','CHOP')}
         held={f"{leg}_{'long' if side>0 else 'short'}":sum(1 for p in book.values() if p['leg']==leg and p['side']==side) for leg in ('ema','mr') for side in (1,-1)}
+        if self.c.crash_drop:held['crash_long']=sum(1 for p in book.values() if p['leg']=='crash')
         invested=(sum(q*quotes[p]['bid'] for p,q in account['longs'].items())+sum(s['value'] for s in account['shorts'].values()))/account['equity'] if account['equity']>0 else 0.
+        # Sharpe and Sortino on UTC daily returns since the start (today counts as it stands), annualised over 365 days.
+        state['daily'][str(now//DAY)]=account['equity']
+        score=ratios([self.c.initial_cash]+[state['daily'][day] for day in sorted(state['daily'],key=int)])
+        score={key:value if value is None or key=='days' else round(value,2) for key,value in score.items()}
         self.log({'event':'snapshot','timestamp':now,'equity':account['equity'],'cash':account['cash'],'halted':state['halted'],'brake':braked,
-                  'invested':invested,'regimes':counts,'book':book,'queue':state['queue'],'done':done,'candle_error':candle_error})
+                  'invested':invested,**score,'regimes':counts,'book':book,'queue':state['queue'],'done':done,'candle_error':candle_error})
         save_state(self.path,state)
         # No candles for this hour means no hourly decision (the minute exits above still ran): say so until they arrive.
         if candle_error and self.feature_hour!=now//span:raise ValueError('No candles for this hour, no decision made: '+candle_error)
         return {'mode':state['mode'],'equity':account['equity'],'fills':state['fills'],'halted':state['halted'],'brake':braked,
-                'invested':round(invested,3),'ready':sum(1 for f in (self.features or {}).values() if f.get('ready')),'regimes':counts,'positions':held,'queued':len(state['queue']),
+                'invested':round(invested,3),'sharpe':score['sharpe'],'sortino':score['sortino'],'ready':sum(1 for f in (self.features or {}).values() if f.get('ready')),'regimes':counts,'positions':held,'queued':len(state['queue']),
                 'done':f"{done['action']} {done['pair']}" if done and done['filled'] else None,'why':done['reason'] if done and done['filled'] else None}
 
     def cycle(self):

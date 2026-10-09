@@ -87,6 +87,18 @@ class WatchTests(unittest.TestCase):
         for bad in (dict(ride_short_minutes=30),dict(ride_short_minutes=1.5),dict(ride_steep=-.1)):
             with self.assertRaises(ValueError):replace(c,**bad).validate()
 
+    def test_the_lock_can_be_measured_on_the_profit_and_the_fast_fall_cut_can_apply_sooner(self):
+        share=replace(W,profit_arm=.01,profit_trail=0.,profit_giveback=.0075)     # close 0.75% of the profit below its best
+        self.assertEqual(seen('ema',1,102.,101.99,101.98,config=share)[0],[[],[],self.HIT('profit lock')])   # +2.00% -> +1.98% is 1% of the profit
+        self.assertEqual(seen('ema',-1,98.,98.01,98.02,config=share)[0],[[],[],self.HIT('profit lock')])
+        self.assertEqual(seen('ema',1,101.,100.9,config=share)[0],[[],[]])        # +0.8% after fees was never past the 1% line
+        self.assertEqual(seen('ema',1,102.,100.9,config=replace(share,profit_giveback=0.))[0],[[],[]])   # no lock at all when both are off
+        young=dict(drift={'X/USD':-.02},opened=NOW-12*60000)
+        self.assertEqual(seen('ema',1,99.5,config=replace(W,fast_cut=.015),**young)[0],[[]])              # twelve minutes old: too young by default
+        self.assertEqual(seen('ema',1,99.5,config=replace(W,fast_cut=.015,fast_wait_minutes=10),**young)[0],[self.HIT('fast fall')])
+        for bad in (dict(profit_giveback=1.),dict(fast_wait_minutes=1.5),dict(fast_wait_minutes=-1)):
+            with self.assertRaises(ValueError):replace(W,**bad).validate()
+
     def test_rules_set_to_zero_are_off_and_a_wide_quote_is_not_acted_on(self):
         self.assertEqual(seen('mr',1,50.,150.,config=C,drift={'X/USD':-.5})[0],[[],[]])
         p=held('ema',1);self.assertEqual(watch({'X/USD':p},{'X/USD':{'bid':90.,'ask':100.,'tradable':False}},W,NOW,{}),[])
@@ -169,10 +181,10 @@ class RunnerWatchTests(unittest.TestCase):
         hourly=Config(**json.loads((root/'config/regime_hourly_candidate.json').read_text()))
         live=Config(**json.loads((root/'config/regime_hourly_exits_candidate.json').read_text()))
         for preset in (live,Config(**json.loads((root/'config/live_candidate.json').read_text()))):
-            self.assertTrue(all(v>0 for v in (preset.profit_trail,preset.stop_loss,preset.mr_take_profit,preset.drawdown_brake)))
-        logged={k:v for k,v in asdict(hourly).items() if k not in ('stop_loss','profit_trail','mr_take_profit','fast_cut','fast_minutes','bar_minutes','ema_min_gap','profit_arm','ride','ride_short_minutes','ride_steep')}
+            self.assertTrue(all(v>0 for v in (preset.profit_trail or preset.profit_giveback,preset.stop_loss,preset.mr_take_profit,preset.drawdown_brake)))
+        logged={k:v for k,v in asdict(hourly).items() if k not in ('stop_loss','profit_trail','mr_take_profit','fast_cut','fast_minutes','bar_minutes','ema_min_gap','profit_arm','ride','ride_short_minutes','ride_steep','pullback','crash_drop','crash_take_profit','crash_ride','crash_guard','profit_giveback','fast_wait_minutes')}
         book={'SOL/USD':dict(leg='mr',side=1,entry=100.,bar=990,high=100.,low=100.,level=None)}          # as the deployed runner wrote it
-        state=dict(Runner(hourly,self.path,FakeClient(),False).state,config_hash=digest(hourly,3),cash=95000.,inventory={'SOL/USD':50.},book=book,fills=62)
+        state=dict(Runner(hourly,self.path,FakeClient(),False).state,config_hash=digest(hourly,5),cash=95000.,inventory={'SOL/USD':50.},book=book,fills=62)
         save_state(self.path,state);self.path.with_suffix('.jsonl').write_text(json.dumps({'event':'start','config':logged})+'\n')
         client=Mock();client.exchange_info.return_value=json.loads((root/'config/exchange_info.json').read_text())
         migrate(self.path,live,root/'config/universe-50.json',False,client)

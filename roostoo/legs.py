@@ -3,12 +3,13 @@
   BULL coin : EMA crossover, long   - buy within `ema_fresh_bars` of the fast EMA crossing above the slow one
   BEAR coin : EMA crossover, short  - short within `ema_fresh_bars` of the fast EMA crossing below the slow one
   CHOP coin : z-score mean reversion - buy at z <= -mr_entry_z, short at z >= +mr_entry_z
+  BEAR coin : steep-drop buy        - buy a bar that closes crash_drop below the previous close (if switched on)
 
 Entries and the slow exits are decided once per hour from the completed candle. `decide` is the single
 implementation: the live runner calls it, and the research harness calls it through research/lab/work/live_legs/,
 so both trade the same rule. `watch` holds the exits the runner checks every minute on live quotes.
 """
-EMA,MR='ema','mr'
+EMA,MR,CRASH='ema','mr','crash'
 TIE=1e-9    # prices sit on a tick grid: a close within this (relative) of the trailing level counts as at it
 
 
@@ -31,7 +32,9 @@ def decide(features,labels,book,locks,c,bar):
         p['high']=max(p['high'],f['bar_high']);p['low']=min(p['low'],f['bar_low'])
         if p['leg']==EMA:
             fast,slow,atr=f['ema_fast'],f['ema_slow'],f['atr_24']
-            if fast is not None and slow is not None and (fast<slow if side>0 else fast>slow):
+            if c.pullback:   # entered against the short-term move, so the averages crossing back is no signal: it has a time limit
+                if bar-p['bar']>=c.max_hold_bars:exits.append(pair);locks[pair]=bar+c.cooldown_bars;continue
+            elif fast is not None and slow is not None and (fast<slow if side>0 else fast>slow):
                 exits.append(pair);locks[pair]=bar+c.cooldown_bars;continue      # the cross that opened it has reversed
             if c.stop_loss:hit=False   # a fixed stop-loss and the profit lock in watch() replace the ATR trail
             elif side>0:   # the trailing level only ever tightens
@@ -39,21 +42,33 @@ def decide(features,labels,book,locks,c,bar):
             else:
                 p['level']=min(p['level'] or float('inf'),min(p['low'],close)+c.stop_atr*atr);hit=close>=p['level']*(1-TIE)
             if hit:exits.append(pair);continue
-        else:
+        elif p['leg']==MR:
             z=f['z'];back=z is not None and (z>=0 if side>0 else z<=0)
             against=close<=p['entry']*(1-c.mr_stop) if side>0 else close>=p['entry']*(1+c.mr_stop)
             if back or against or bar-p['bar']>=c.mr_hold_bars:
                 exits.append(pair);locks[pair]=bar+1+c.mr_cooldown_bars;continue
-        held[p['leg']]+=1
+        elif bar-p['bar']>=c.mr_hold_bars:                                           # a steep-drop buy: only its time limit is judged here
+            exits.append(pair);locks[pair]=bar+1+c.mr_cooldown_bars;continue
+        held[EMA if p['leg']==EMA else MR]+=1                                        # a steep-drop buy uses a mean-reversion slot
     entries=[];taken=set()
     def free(pair):
         return pair not in book and pair not in taken and locks.get(pair,-1)<=bar and features[pair].get('ready')
+    crashes=[(f['close']/f['bar_high']-1,pair) for pair,f in sorted(features.items())
+             if c.crash_drop and labels.get(pair)=='BEAR' and free(pair) and f['close']<=f['bar_high']*(1-c.crash_drop)]
+    for _,pair in sorted(crashes):                                                # steepest drop first
+        if held[MR]>=c.mr_slots:break
+        entries.append((pair,1,CRASH,c.mr_fraction));taken.add(pair);held[MR]+=1
     trend=[]
     for pair in sorted(features):
         f=features[pair]
         if not free(pair) or f['ema_fast'] is None or f['ema_slow'] is None or not f['atr_24']>0:continue
         if abs(f['ema_fast']-f['ema_slow'])<c.ema_min_gap*f['close']:continue           # a hairline cross is not a trend yet
         gap=(f['ema_fast']-f['ema_slow'])/f['atr_24']
+        if c.pullback:                                                                  # enter a trend on a move against it, the larger first
+            move=f.get('momentum',0.)
+            if gap<0 and move>=c.pullback and labels.get(pair)=='BEAR' and c.allow_short:trend.append((-move,pair,-1))
+            elif gap>0 and move<=-c.pullback and labels.get(pair)=='BULL':trend.append((move,pair,1))
+            continue
         if gap>0 and f['age_up']<=c.ema_fresh_bars and labels.get(pair)=='BULL':trend.append((-gap,pair,1))
         elif gap<0 and f['age_down']<=c.ema_fresh_bars and labels.get(pair)=='BEAR' and c.allow_short:trend.append((gap,pair,-1))
     for _,pair,side in sorted(trend):                                            # widest gap in ATRs first
@@ -103,12 +118,15 @@ def watch(book,quotes,c,now,drift,quick=None):
         side=p['side'];entry=p['entry'];price=q['bid'] if side>0 else q['ask']
         best=p['best']=max(p.get('best',entry),price) if side>0 else min(p.get('best',entry),price)
         move=side*(price/entry-1);peak=side*(best/entry-1);back=side*(best-price)/best
-        settled=now-p.get('opened',0)>=c.fast_minutes*60000                      # the fall that led to the entry is not counted against it
+        settled=now-p.get('opened',0)>=(c.fast_wait_minutes or c.fast_minutes)*60000   # a position this young is left to its stop-loss
         still=moving(c,side,pair,drift,quick) if c.ride else None                # is the price still going the position's way
         riding=still is True
+        surge=bool(c.crash_ride) and bool(quick) and pair in quick and side*quick[pair]>=c.crash_ride   # very strong momentum
         if c.stop_loss and move<=-c.stop_loss:reason='stop loss'
-        elif c.profit_trail and peak-cost>c.profit_arm and back>=c.profit_trail:reason='profit lock'
+        elif peak-cost>c.profit_arm and ((c.profit_trail and back>=c.profit_trail) or (c.profit_giveback and move<=peak*(1-c.profit_giveback))):reason='profit lock'
         elif c.mr_take_profit and p['leg']==MR and move-cost>=c.mr_take_profit and not riding:reason='profit target'
+        elif c.crash_take_profit and p['leg']==CRASH and move-cost>=c.crash_take_profit and not surge:reason='profit target'
+        elif c.crash_guard and p['leg']==CRASH and peak>=c.crash_guard and move<=0:reason='back to entry'
         elif p['leg']==EMA and still is False and move-cost>=c.profit_arm:reason='momentum faded'
         elif c.fast_cut and move<0 and settled and side*drift.get(pair,0.)<=-c.fast_cut:reason='fast fall'
         else:continue

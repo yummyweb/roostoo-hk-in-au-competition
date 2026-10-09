@@ -81,7 +81,9 @@ sudo systemctl show roostoo-bot -p ExecStart -p ActiveState -p SubState
   switch, follow the transition procedure below.
 - The status line shows `"regimes"` (how many coins carry each label),
   `"positions"` (open positions by leg and side), `"invested"` (share of the
-  account in positions), `"ready"` (coins with enough history to trade), `"brake"` (true while the loss brake blocks new
+  account in positions), `"ready"` (coins with enough history to trade), `"sharpe"` and `"sortino"`
+  (from the account's value at the end of each UTC day since the start, today
+  as it stands, annualised over 365 days; null until two days exist), `"brake"` (true while the loss brake blocks new
   entries), `"queued"` (orders waiting for their minute), `"done"` (the order
   sent this cycle) and `"why"` (its reason, for example `profit lock` or
   `stop loss`). Entries are decided every five minutes and exits are checked
