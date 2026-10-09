@@ -98,8 +98,9 @@ sudo systemctl show roostoo-bot -p ExecStart -p ActiveState -p SubState
   entry is decided and the hourly exits are not checked until it succeeds (it
   is retried every minute). The live starting wallet must be flat and
   match the configured `initial_cash` (default USD 100,000).
-- `"queued"` above zero means orders are waiting: one is sent per cycle, at
-  least 60 seconds after the previous order. Check the following cycles for
+- `"queued"` above zero means orders are waiting: up to 24 are sent per cycle
+  (the exchange allows 30 calls a minute), and an entry waits there until
+  there is cash for it. `"done"` lists every order sent this cycle. Check the following cycles for
   `"done"` or an error. The breakout and ensemble presets print `"pending"`
   instead.
 

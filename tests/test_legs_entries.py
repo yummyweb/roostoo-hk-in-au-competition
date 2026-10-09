@@ -97,6 +97,40 @@ class RunnerEntryTests(unittest.TestCase):
         self.assertEqual(r.state['locks']['A/USD'],1000+C.mr_cooldown_bars)
 
 
+    def test_with_the_call_limit_every_queued_order_goes_out_in_one_cycle_without_spending_cash_twice(self):
+        from roostoo import bot
+        self.assertEqual(bot.ORDERS_PER_CYCLE,24)                                # 30 calls a minute less the cycle's own reads and a margin
+        config=replace(KW,top_n=4,max_position=.3,mr_fraction=.2);r=self.runner(config);r.orders=bot.ORDERS_PER_CYCLE
+        r.rules={p:PairRule() for p in 'ABDEFG'};self.quotes={p:{'bid':100.,'ask':100.} for p in r.rules}
+        flat={p:row() for p in r.rules}
+        first=dict(flat,A=row(age_up=3),B=row(ema_fast=99.,age_up=10**6,age_down=2),D=row(z=-3.2),E=row(z=3.2))
+        self.decide_hour(r,first,{'A':'BULL','B':'BEAR','D':'CHOP','E':'CHOP'});status=self.step(r)
+        self.assertEqual(status['done'],'BUY A, SHORT B, BUY D, SHORT E');self.assertEqual((status['queued'],r.state['fills']),(0,4))
+        # 30% + 30% + 20% + 20% uses the account: two more trend entries find no cash for half their size and are skipped, not overdrawn
+        self.assertLess(r.state['cash'],1500.);self.assertGreaterEqual(r.state['cash'],0.)
+        self.now=1001*HOUR
+        second=dict(flat,A=row(ema_fast=99.),B=row(ema_fast=101.,age_down=10**6),D=row(z=.1),E=row(z=3.),F=row(age_up=2),G=row(age_up=2))
+        self.decide_hour(r,second,{'F':'BULL','G':'BULL','E':'CHOP'});status=self.step(r)
+        self.assertEqual(status['done'],'SELL A, COVER B, SELL D');self.assertEqual(sorted(r.state['book']),['E'])   # exits first; cash they free counts next cycle
+        self.assertEqual(self.step(r)['done'],'BUY F, BUY G')
+
+    def test_a_refused_spot_order_is_not_left_in_flight_and_ends_the_cycles_orders(self):
+        import json
+        from roostoo.api import APIError
+        from roostoo.bot import save_state
+        class Exchange(FakeClient):
+            def request(self,method,endpoint,params=None,signed=False):
+                if endpoint!='/v3/place_order':return super().request(method,endpoint,params,signed)
+                self.calls.append((endpoint,dict(params)))
+                if self.fail:raise self.fail
+                self.usd-=float(params['quantity'])*100;return {'Success':True,'OrderDetail':{'Status':'FILLED','FilledAverPrice':100.}}
+        client=Exchange();save_state(self.path,dict(Runner(KW,self.path,client,True).state,fills=1))
+        r=Runner(KW,self.path,client,True);r.rules={p:PairRule() for p in self.pairs};r.read_quotes=lambda:(self.quotes,self.now);r.refresh_features=lambda now:None;r.orders=24
+        client.fail=APIError('too many requests')
+        self.decide_hour(r,dict(self.FLAT,**{'A/USD':row(age_up=3),'D/USD':row(z=-3.2)}),{'A/USD':'BULL','D/USD':'CHOP'})
+        status=self.step(r);self.assertEqual((status['done'],r.state['inflight'],len(client.calls)),(None,None,1))   # one refusal, no second request
+        events=[json.loads(line)['event'] for line in self.path.with_suffix('.jsonl').read_text().splitlines()];self.assertIn('order_refused',events)
+
     def test_sharpe_and_sortino_come_from_utc_daily_equity_and_are_kept_in_the_state_and_the_log(self):
         import json,math,statistics
         from roostoo.metrics import ratios

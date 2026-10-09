@@ -30,6 +30,9 @@ HOUR=3600000
 MINUTE=60000;DAY=24*HOUR
 COIN_REGIME=Path(__file__).resolve().parents[1]/'config/coin_regime.json'       # fitted on hourly candles
 MINUTE_REGIME=str(Path(__file__).resolve().parents[1]/'config/coin_regime_{}m.json')   # one per shorter bar length
+# Roostoo allows 30 API calls a minute. A cycle reads the clock, the quotes, the wallet and the short list, and is
+# followed by a 60-second sleep, so the regime runner may send this many orders in one cycle and stay inside the limit.
+CALLS_PER_MINUTE=30;ORDERS_PER_CYCLE=CALLS_PER_MINUTE-6
 SHORT_KINDS=('SHORT','COVER');CLOSING=('SELL','COVER')   # an interrupted short request is reconciled from the exchange's position list
 
 
@@ -138,6 +141,8 @@ class Runner:
         self.series=None       # bars built from quotes: pair -> [Indicators, RegimeFilter, last close], warmed on the first cycle
         self.no_shorts=False   # set when the exchange says this account cannot short; the short side is then skipped
         self.tape={}           # pair -> [(time, mid price)] of the last fast_minutes, from the quotes read each cycle
+        self.orders=1          # most orders the regime runner sends in one cycle; main() raises it to ORDERS_PER_CYCLE
+        self.requests=0        # order requests sent, to tell an action that was refused from one that was skipped
         if self.legs and 'daily' not in self.state:self.state['daily']=self.daily_history()
 
     def daily_history(self):
@@ -384,13 +389,17 @@ class Runner:
         return {'cash':cash,'longs':longs,'shorts':shorts,'equity':equity}
 
     def spot(self,pair,side,quantity,quotes,reason,now):
-        """One market spot order under the same no-retry rule as submit(). Returns the fill price."""
+        """One market spot order under the same no-retry rule as submit(). Returns the fill price, or None if refused."""
         reference=quotes[pair]['ask' if side=='BUY' else 'bid']
         intent={'pair':pair,'side':side,'quantity':quantity,'reference_price':reference,'signal_time':now,'reason':reason}
-        self.state.update(inflight=intent,last_submit=now);save_state(self.path,self.state)
+        self.state.update(inflight=intent,last_submit=now);save_state(self.path,self.state);self.requests+=1
         self.log({'event':'intent','mode':self.state['mode'],**intent})
         if self.live:
-            response=self.client.request('POST','/v3/place_order',{'pair':pair,'side':side,'type':'MARKET','quantity':format(quantity,'.12f')},signed=True)
+            try:response=self.client.request('POST','/v3/place_order',{'pair':pair,'side':side,'type':'MARKET','quantity':format(quantity,'.12f')},signed=True)
+            except APIError as error:
+                # The exchange answered and refused, so nothing changed. Anything else stays in flight and stops the runner.
+                self.log({'event':'order_refused','timestamp':now,'pair':pair,'side':side,'error':str(error)})
+                self.state['inflight']=None;save_state(self.path,self.state);return None
             detail=response.get('OrderDetail',{})
             self.log({'event':'exchange_response','timestamp':now,'response':response})
             if detail.get('Status')!='FILLED':raise RuntimeError('Order not confirmed FILLED; reconciliation required')
@@ -410,7 +419,7 @@ class Runner:
     def short(self,pair,kind,collateral,quotes,reason,now,leg=None):
         """Open (collateral in USD) or fully close a 1x short. Returns the entry or close price, or None if refused."""
         intent={'pair':pair,'kind':kind,'leg':leg,'collateral':collateral,'signal_time':now,'reason':reason}
-        self.state.update(inflight=intent,last_submit=now);save_state(self.path,self.state)
+        self.state.update(inflight=intent,last_submit=now);save_state(self.path,self.state);self.requests+=1
         self.log({'event':'intent','mode':self.state['mode'],**intent})
         if self.live:
             try:
@@ -438,25 +447,31 @@ class Runner:
         return price
 
     def act(self,action,account,quotes,now):
-        """Carry out one queued action against the current account. Sizes come from equity at this moment."""
-        pair,kind=action['pair'],action['action'];book=self.state['book'];rule=self.rules[pair]
+        """Carry out one queued action against the current account. Sizes come from equity at this moment. `account`
+        is updated for what the order used, so that several actions in one cycle do not spend the same cash twice;
+        cash freed by a close is counted only from the next cycle's wallet read."""
+        pair,kind=action['pair'],action['action'];book=self.state['book'];rule=self.rules[pair];rate=self.c.fee_bps/10000
         opened={'leg':action.get('leg'),'bar':now//self.span,'level':None,'opened':now}
         budget=min(action.get('weight',0)*account['equity'],account['cash']/(1+self.c.fee_bps/10000)*.995)
         if kind in ('BUY','SHORT') and budget<action['weight']*account['equity']/2:return False   # not enough cash for half the size
         if kind=='SELL':
             quantity=rule.quantity(account['longs'].get(pair,0))
             if not rule.valid(quantity,quotes[pair]['bid']):book.pop(pair,None);return False
-            self.spot(pair,'SELL',quantity,quotes,action['reason'],now);book.pop(pair,None)
+            if self.spot(pair,'SELL',quantity,quotes,action['reason'],now) is None:
+                self.state['queue'].append(action);return False                  # refused: nothing changed, try again
+            book.pop(pair,None);account['longs'][pair]=0.
         elif kind=='COVER':
             if pair not in account['shorts']:book.pop(pair,None);return False
             if self.short(pair,'COVER',0.,quotes,action['reason'],now) is None:
                 self.state['queue'].append(action);return False                  # refused: nothing changed, try again after the other actions
-            book.pop(pair,None)
+            book.pop(pair,None);account['shorts'].pop(pair,None)
         elif kind=='BUY':
             quantity=rule.quantity(budget/quotes[pair]['ask'])
             if not rule.valid(quantity,quotes[pair]['ask']):return False
             price=self.spot(pair,'BUY',quantity,quotes,action['reason'],now)
+            if price is None:return False
             book[pair]=dict(opened,side=1,entry=price,high=price,low=price)
+            account['cash']-=quantity*price*(1+rate);account['longs'][pair]=account['longs'].get(pair,0)+quantity
         else:
             collateral=math.floor(budget*100)/100
             if collateral<1:return False
@@ -464,6 +479,7 @@ class Runner:
             if price is None:
                 self.state['locks'][pair]=(now+DAY)//self.span;return False      # refused: leave this pair alone for a day
             book[pair]=dict(opened,side=-1,entry=price,high=price,low=price)
+            account['cash']-=collateral*(1+rate);account['shorts'][pair]={'qty':collateral/price,'entry':price,'collateral':collateral,'value':collateral}
         save_state(self.path,self.state);return True
 
     def drift(self,quotes,now):
@@ -569,14 +585,17 @@ class Runner:
         for pair,kind,reason in foreign:
             state['queue']=[a for a in state['queue'] if a['pair']!=pair]
             state['queue'].insert(0,{'pair':pair,'action':kind,'reason':reason})
-        done=None
-        if now-state['last_submit']>=60000:                                       # one order per minute for the whole account
+        done=[]
+        if self.orders>1 or now-state['last_submit']>=60000:                      # one order a minute, or as many as the call limit allows
             for action in list(state['queue']):
+                if len(done)>=self.orders:break
                 if not quotes[action['pair']].get('tradable',True):continue
                 # A trend entry is sent only while the price is moving its way; one that arrives after the move waits in the queue.
                 if self.c.ride and not self.c.pullback and action.get('leg')=='ema' and not moving(self.c,1 if action['action']=='BUY' else -1,action['pair'],*waves):continue
-                state['queue'].remove(action);done=dict(action,filled=self.act(action,account,quotes,now))
-                if done['filled'] or state['last_submit']==now:break                # a request went out; an action skipped unsent does not use the minute
+                sent=self.requests;state['queue'].remove(action);filled=self.act(action,account,quotes,now)
+                if filled:done.append(action)
+                elif self.requests>sent:break                                       # the exchange refused a request: send no more this cycle
+                elif action['action'] not in CLOSING:state['queue'].append(action)  # an entry with no cash yet waits for what this cycle's closes free
         counts={k:sum(1 for v in self.labels.values() if v==k) for k in ('BULL','BEAR','CHOP')}
         held={f"{leg}_{'long' if side>0 else 'short'}":sum(1 for p in book.values() if p['leg']==leg and p['side']==side) for leg in ('ema','mr') for side in (1,-1)}
         if self.c.crash_drop:held['crash_long']=sum(1 for p in book.values() if p['leg']=='crash')
@@ -586,13 +605,14 @@ class Runner:
         score=ratios([self.c.initial_cash]+[state['daily'][day] for day in sorted(state['daily'],key=int)])
         score={key:value if value is None or key=='days' else round(value,2) for key,value in score.items()}
         self.log({'event':'snapshot','timestamp':now,'equity':account['equity'],'cash':account['cash'],'halted':state['halted'],'brake':braked,
-                  'invested':invested,**score,'regimes':counts,'book':book,'queue':state['queue'],'done':done,'candle_error':candle_error})
+                  'invested':invested,**score,'regimes':counts,'book':book,'queue':state['queue'],
+                  'done':[dict(a,filled=True) for a in done] if len(done)>1 else dict(done[0],filled=True) if done else None,'candle_error':candle_error})
         save_state(self.path,state)
         # No candles for this hour means no hourly decision (the minute exits above still ran): say so until they arrive.
         if candle_error and self.feature_hour!=now//span:raise ValueError('No candles for this hour, no decision made: '+candle_error)
         return {'mode':state['mode'],'equity':account['equity'],'fills':state['fills'],'halted':state['halted'],'brake':braked,
                 'invested':round(invested,3),'sharpe':score['sharpe'],'sortino':score['sortino'],'ready':sum(1 for f in (self.features or {}).values() if f.get('ready')),'regimes':counts,'positions':held,'queued':len(state['queue']),
-                'done':f"{done['action']} {done['pair']}" if done and done['filled'] else None,'why':done['reason'] if done and done['filled'] else None}
+                'done':', '.join(f"{a['action']} {a['pair']}" for a in done) or None,'why':', '.join(a['reason'] for a in done) or None}
 
     def cycle(self):
         if self.legs:return self.cycle_legs()
@@ -653,7 +673,7 @@ def main():
         except BlockingIOError:raise SystemExit('Another bot owns this state; refusing duplicate execution')
         client=Client(os.environ.get('ROOSTOO_API_KEY',''),os.environ.get('ROOSTOO_API_SECRET',''))
         live=a.live or os.environ.get('ROOSTOO_LIVE','0')=='1'
-        runner=Runner(c,a.state,client,live);runner.bootstrap();cycles=0
+        runner=Runner(c,a.state,client,live);runner.orders=ORDERS_PER_CYCLE;runner.bootstrap();cycles=0
         while a.cycles==0 or cycles<a.cycles:
             try:print(json.dumps(runner.cycle()),flush=True)
             except Exception as e:
