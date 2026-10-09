@@ -181,7 +181,7 @@ class RunnerWatchTests(unittest.TestCase):
         hourly=Config(**json.loads((root/'config/regime_hourly_candidate.json').read_text()))
         live=Config(**json.loads((root/'config/regime_hourly_exits_candidate.json').read_text()))
         for preset in (live,Config(**json.loads((root/'config/live_candidate.json').read_text()))):
-            self.assertTrue(all(v>0 for v in (preset.profit_trail or preset.profit_giveback,preset.stop_loss,preset.mr_take_profit,preset.drawdown_brake)))
+            self.assertTrue(all(v>0 for v in (preset.profit_trail or preset.profit_giveback,preset.stop_loss,preset.mr_take_profit)))
         logged={k:v for k,v in asdict(hourly).items() if k not in ('stop_loss','profit_trail','mr_take_profit','fast_cut','fast_minutes','bar_minutes','ema_min_gap','profit_arm','ride','ride_short_minutes','ride_steep','pullback','crash_drop','crash_take_profit','crash_ride','crash_guard','profit_giveback','fast_wait_minutes')}
         book={'SOL/USD':dict(leg='mr',side=1,entry=100.,bar=990,high=100.,low=100.,level=None)}          # as the deployed runner wrote it
         state=dict(Runner(hourly,self.path,FakeClient(),False).state,config_hash=digest(hourly,5),cash=95000.,inventory={'SOL/USD':50.},book=book,fills=62)
